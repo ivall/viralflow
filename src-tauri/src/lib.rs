@@ -9,6 +9,7 @@ mod model;
 mod paths;
 mod projects;
 mod render;
+mod secrets;
 mod settings;
 
 use std::sync::Arc;
@@ -29,12 +30,15 @@ pub fn run() {
             }
             let settings = settings::SettingsStore::load(&paths);
             let _ = app.asset_protocol_scope().allow_directory(&paths.builtin, true);
-            app.manage(AppState { paths, settings, jobs: Arc::new(render::Jobs::default()) });
+            let keys = Arc::new(secrets::KeyStore::new(&paths.data));
+            app.manage(AppState { paths, settings, keys, jobs: Arc::new(render::Jobs::default()) });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_settings,
             commands::save_settings,
+            commands::openrouter_key_status,
+            commands::set_openrouter_key,
             commands::tools_status,
             commands::list_projects,
             commands::load_project,

@@ -30,7 +30,7 @@ const aspect = ref(settings.value.defaultAspect || '9:16')
 const running = ref(false)
 const statuses = ref<Record<string, { state: 'waiting' | 'working' | 'done' | 'failed'; detail?: string }>>({})
 
-const aiAvailable = computed(() => Boolean(settings.value.openrouterApiKey))
+const aiAvailable = computed(() => settings.key.hasKey)
 const canRun = computed(() => voices.value.length > 0 && backgrounds.value.length > 0 && !running.value)
 const aspectOptions = ASPECT_PRESETS.map(preset => ({ value: preset.id, label: preset.label, hint: preset.hint }))
 const languageOptions = [{ value: 'auto', label: 'Detect automatically' }, { value: 'en', label: 'English' }, { value: 'pl', label: 'Polish' }, { value: 'de', label: 'German' }, { value: 'es', label: 'Spanish' }, { value: 'fr', label: 'French' }]

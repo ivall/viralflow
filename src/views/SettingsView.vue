@@ -21,7 +21,7 @@ const models = ref<WhisperModel[]>([])
 const downloading = ref<{ id: string; received: number; total: number } | null>(null)
 const showKey = ref(false)
 const checking = ref(false)
-const keyDraft = ref(settings.value.openrouterApiKey)
+const keyDraft = ref('')
 let unlisten: (() => void) | null = null
 
 const fpsOptions = [24, 25, 30, 50, 60].map(value => ({ value, label: `${value} fps` }))
@@ -84,9 +84,15 @@ const aiModel = computed({
   set: (value: string) => { void settings.update({ openrouterModel: value }) }
 })
 
-function saveKey() {
-  void settings.update({ openrouterApiKey: keyDraft.value.trim() })
-  toasts.success(keyDraft.value.trim() ? 'API key saved' : 'API key removed')
+async function saveKey(next: string) {
+  try {
+    await settings.saveKey(next)
+    keyDraft.value = ''
+    showKey.value = false
+    toasts.success(next ? 'API key saved' : 'API key removed')
+  } catch (error) {
+    toasts.error('API key could not be saved', errorMessage(error))
+  }
 }
 </script>
 
@@ -140,7 +146,7 @@ function saveKey() {
             <div v-if="settings.value.transcriptionProvider === 'openrouter'">
               <span class="mb-1 block text-xs font-medium">Speech-to-text model</span>
               <ModelPicker v-model="transcriptionModel" kind="transcription" />
-              <span class="mt-1 block text-2xs text-faint">{{ settings.value.openrouterApiKey ? 'Audio of the selected clip is sent to OpenRouter.' : 'Add your OpenRouter API key below to use cloud captions.' }}</span>
+              <span class="mt-1 block text-2xs text-faint">{{ settings.key.hasKey ? 'Audio of the selected clip is sent to OpenRouter.' : 'Add your OpenRouter API key below to use cloud captions.' }}</span>
             </div>
             <div v-if="settings.value.transcriptionProvider === 'local'">
               <p class="mb-2 text-2xs text-muted">Local models run privately with Whisper. Larger models are more accurate but slower.</p>
@@ -163,20 +169,24 @@ function saveKey() {
         <section>
           <h2 class="text-sm font-semibold">AI assistant</h2>
           <div class="mt-3 space-y-3 rounded-lg border border-line bg-panel px-4 py-3">
-            <p class="text-2xs leading-4 text-muted">Optional. With an OpenRouter key you can draft videos from a topic, auto-edit voiceovers with your photos, rewrite text and use cloud captions. The key is stored only on this computer.</p>
+            <p class="text-2xs leading-4 text-muted">Optional. With an OpenRouter key you can draft videos from a topic, auto-edit voiceovers with your photos, rewrite text and use cloud captions. The key is kept in your system's password store and only sent to OpenRouter.</p>
             <label class="block">
               <span class="mb-1 block text-xs font-medium">OpenRouter API key</span>
               <span class="relative block">
-                <input v-model="keyDraft" :type="showKey ? 'text' : 'password'" class="field pr-9" placeholder="sk-or-…" autocomplete="off" spellcheck="false">
+                <input v-model="keyDraft" :type="showKey ? 'text' : 'password'" class="field pr-9" :placeholder="settings.key.hasKey ? `Saved key ending in ${settings.key.hint || '…'}` : 'sk-or-…'" autocomplete="off" spellcheck="false">
                 <button class="absolute right-1 top-1/2 grid size-7 -translate-y-1/2 place-items-center rounded text-muted hover:text-fg" :aria-label="showKey ? 'Hide key' : 'Show key'" @click="showKey = !showKey"><EyeOff v-if="showKey" class="size-3.5" /><Eye v-else class="size-3.5" /></button>
               </span>
+              <span v-if="settings.key.hasKey && settings.key.storage === 'file'" class="mt-1 block text-2xs text-warn">No system password store found, so the key is saved in a private file in the app's data folder.</span>
             </label>
             <div>
               <span class="mb-1 block text-xs font-medium">Model</span>
               <ModelPicker v-model="aiModel" />
               <span class="mt-1 block text-2xs text-faint">Used for drafts, photo matching and rewriting. Changes are saved right away.</span>
             </div>
-            <UiButton variant="outline" size="sm" :disabled="keyDraft.trim() === settings.value.openrouterApiKey" @click="saveKey">Save key</UiButton>
+            <div class="flex gap-2">
+              <UiButton variant="outline" size="sm" :disabled="!keyDraft.trim()" @click="saveKey(keyDraft.trim())">{{ settings.key.hasKey ? 'Replace key' : 'Save key' }}</UiButton>
+              <UiButton v-if="settings.key.hasKey" variant="ghost" size="sm" @click="saveKey('')">Remove key</UiButton>
+            </div>
           </div>
         </section>
 

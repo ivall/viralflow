@@ -33,7 +33,7 @@ let unlisten: (() => void) | null = null
 const sources = computed(() => speechSources().map(item => ({ value: item.id, label: `${item.name} (${item.start.toFixed(1)}s)` })))
 const cloud = computed(() => settings.value.transcriptionProvider === 'openrouter')
 const model = computed(() => models.value.find(candidate => candidate.id === settings.value.whisperModel))
-const ready = computed(() => cloud.value ? Boolean(settings.value.openrouterApiKey) : Boolean(model.value?.installed) && settings.value && settings.tools?.whisper !== false)
+const ready = computed(() => cloud.value ? settings.key.hasKey : Boolean(model.value?.installed) && settings.value && settings.tools?.whisper !== false)
 const languageOptions = [
   { value: 'auto', label: 'Detect automatically' }, { value: 'en', label: 'English' }, { value: 'pl', label: 'Polish' }, { value: 'de', label: 'German' },
   { value: 'es', label: 'Spanish' }, { value: 'fr', label: 'French' }, { value: 'it', label: 'Italian' }, { value: 'pt', label: 'Portuguese' },
@@ -147,7 +147,7 @@ async function exportSubtitles() {
           <UiButton v-if="!downloading" variant="outline" size="sm" class="w-full" @click="downloadModel"><Download class="size-3.5" />Download model</UiButton>
           <div v-else class="h-1.5 overflow-hidden rounded-full bg-line"><div class="h-full bg-accent transition-[width]" :style="{ width: `${Math.round(downloading.received / Math.max(1, downloading.total) * 100)}%` }" /></div>
         </div>
-        <p v-else-if="cloud && !settings.value.openrouterApiKey" class="text-2xs text-warn">Add an OpenRouter key in Settings to use cloud captions.</p>
+        <p v-else-if="cloud && !settings.key.hasKey" class="text-2xs text-warn">Add an OpenRouter key in Settings to use cloud captions.</p>
 
         <UiButton variant="primary" class="w-full" :disabled="!ready || busy || !source" @click="generate">
           <LoaderCircle v-if="busy" class="size-3.5 animate-spin" />{{ busy ? 'Listening…' : 'Generate captions' }}

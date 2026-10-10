@@ -27,7 +27,7 @@ export const EFFECTS: Array<{ kind: EffectKind; label: string; description: stri
   { kind: 'zoom-out', label: 'Pull out', description: 'Slow zoom out across the clip' },
   { kind: 'flash', label: 'Flash', description: 'Bright flash at the start' },
   { kind: 'blur', label: 'Blur', description: 'Soft blur over the whole clip' },
-  { kind: 'vhs', label: 'VHS', description: 'Grain, scanlines and faded colour' },
+  { kind: 'vhs', label: 'VHS', description: 'Grain, scanlines and faded color' },
   { kind: 'glitch', label: 'Glitch', description: 'Digital band displacement' }
 ]
 

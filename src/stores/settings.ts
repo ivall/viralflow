@@ -1,11 +1,10 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { errorMessage, ipc, type Settings, type ToolsStatus } from '@/services/ipc'
+import { errorMessage, ipc, type KeyStatus, type Settings, type ToolsStatus } from '@/services/ipc'
 import { useToasts } from './toast'
 
 const DEFAULTS: Settings = {
   ffmpegPath: '',
-  openrouterApiKey: '',
   openrouterModel: 'openai/gpt-6-luna',
   openrouterTranscriptionModel: 'openai/whisper-large-v3',
   transcriptionProvider: 'local',
@@ -24,6 +23,8 @@ export const useSettings = defineStore('settings', () => {
   const value = ref<Settings>({ ...DEFAULTS })
   const tools = ref<ToolsStatus | null>(null)
   const loaded = ref(false)
+  /** The key itself stays in Rust; the UI only knows whether one is saved. */
+  const key = ref<KeyStatus>({ hasKey: false, hint: '', storage: 'keyring' })
 
   async function load() {
     try {
@@ -33,6 +34,7 @@ export const useSettings = defineStore('settings', () => {
     }
     loaded.value = true
     void refreshTools()
+    void ipc.openrouterKeyStatus().then(status => { key.value = status }).catch(() => undefined)
   }
 
   async function refreshTools() {
@@ -54,5 +56,9 @@ export const useSettings = defineStore('settings', () => {
     }
   }
 
-  return { value, tools, loaded, load, update, refreshTools }
+  async function saveKey(next: string) {
+    key.value = await ipc.setOpenrouterKey(next)
+  }
+
+  return { value, tools, loaded, key, load, update, refreshTools, saveKey }
 })

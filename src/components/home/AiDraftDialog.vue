@@ -29,7 +29,7 @@ const background = ref<MediaAsset | null>(null)
 const plan = ref<ScriptPlan | null>(null)
 const busy = ref(false)
 
-const hasKey = computed(() => Boolean(settings.value.openrouterApiKey))
+const hasKey = computed(() => settings.key.hasKey)
 const platformOptions = ['TikTok', 'YouTube Shorts', 'Instagram Reels', 'YouTube'].map(value => ({ value, label: value }))
 const toneOptions = ['Energetic', 'Calm', 'Funny', 'Expert', 'Mysterious', 'Inspiring'].map(value => ({ value, label: value }))
 const languageOptions = ['English', 'Polish', 'German', 'Spanish', 'French', 'Italian', 'Portuguese', 'Ukrainian'].map(value => ({ value, label: value }))

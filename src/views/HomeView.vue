@@ -32,7 +32,7 @@ const visible = computed(() => {
   const text = query.value.trim().toLowerCase()
   return text ? projects.items.filter(project => project.name.toLowerCase().includes(text)) : projects.items
 })
-const aiReady = computed(() => Boolean(settings.value.openrouterApiKey.trim()))
+const aiReady = computed(() => settings.key.hasKey)
 
 onMounted(async () => {
   try {

@@ -102,7 +102,7 @@ defineExpose({ focus })
 <template>
   <UiSection title="Text">
     <template #actions>
-      <UiButton v-if="settings.value.openrouterApiKey" variant="ghost" size="sm" :disabled="rewriting || !style.content.trim()" @click="rewrite"><Sparkles class="size-3" />{{ rewriting ? 'Rewriting…' : 'Rewrite' }}</UiButton>
+      <UiButton v-if="settings.key.hasKey" variant="ghost" size="sm" :disabled="rewriting || !style.content.trim()" @click="rewrite"><Sparkles class="size-3" />{{ rewriting ? 'Rewriting…' : 'Rewrite' }}</UiButton>
     </template>
     <textarea ref="textarea" v-model="draft" class="field min-h-[72px]" rows="3" aria-label="Text content" @input="onInput" @blur="editingStarted = false" />
     <UiButton v-if="isCaption" variant="outline" size="sm" class="w-full" @click="applyToAll">Apply this style to all captions</UiButton>

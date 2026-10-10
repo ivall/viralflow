@@ -6,7 +6,6 @@ import type { CaptionCue, MediaKind, Project, ProjectSummary } from '@/lib/types
 
 export interface Settings {
   ffmpegPath: string
-  openrouterApiKey: string
   openrouterModel: string
   openrouterTranscriptionModel: string
   transcriptionProvider: 'local' | 'openrouter'
@@ -73,6 +72,13 @@ export interface ScriptPlan {
   textCues: Array<{ text: string; start: number; duration: number; emphasis: boolean }>
 }
 
+export interface KeyStatus {
+  hasKey: boolean
+  /** Last four characters of the saved key. */
+  hint: string
+  storage: 'keyring' | 'file'
+}
+
 export interface SystemFont {
   name: string
   aliases: string[]
@@ -133,6 +139,8 @@ export function fileUrl(path: string | undefined) {
 export const ipc = {
   getSettings: () => invoke<Settings>('get_settings'),
   saveSettings: (settings: Settings) => invoke<Settings>('save_settings', { settings }),
+  openrouterKeyStatus: () => invoke<KeyStatus>('openrouter_key_status'),
+  setOpenrouterKey: (key: string) => invoke<KeyStatus>('set_openrouter_key', { key }),
   toolsStatus: () => invoke<ToolsStatus>('tools_status'),
 
   listProjects: () => invoke<ProjectSummary[]>('list_projects'),

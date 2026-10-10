@@ -10,7 +10,6 @@ use crate::paths::{write_atomic, AppPaths};
 pub struct Settings {
     /// Folder or full path of ffmpeg; empty = auto-detect.
     pub ffmpeg_path: String,
-    pub openrouter_api_key: String,
     pub openrouter_model: String,
     pub openrouter_transcription_model: String,
     pub transcription_provider: String,
@@ -29,7 +28,6 @@ impl Default for Settings {
     fn default() -> Self {
         Settings {
             ffmpeg_path: String::new(),
-            openrouter_api_key: String::new(),
             openrouter_model: "openai/gpt-6-luna".into(),
             openrouter_transcription_model: crate::ai::openrouter::DEFAULT_TRANSCRIPTION_MODEL.into(),
             transcription_provider: "local".into(),

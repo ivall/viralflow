@@ -20,6 +20,7 @@ use crate::settings::{Settings, SettingsStore};
 pub struct AppState {
     pub paths: AppPaths,
     pub settings: SettingsStore,
+    pub keys: Arc<crate::secrets::KeyStore>,
     pub jobs: Arc<Jobs>,
 }
 
@@ -49,6 +50,18 @@ pub fn get_settings(state: State<AppState>) -> Settings {
 #[tauri::command]
 pub fn save_settings(state: State<AppState>, settings: Settings) -> AppResult<Settings> {
     state.settings.set(settings)
+}
+
+#[tauri::command]
+pub async fn openrouter_key_status(state: State<'_, AppState>) -> AppResult<crate::secrets::KeyStatus> {
+    let keys = state.keys.clone();
+    blocking(move || Ok(keys.status())).await
+}
+
+#[tauri::command]
+pub async fn set_openrouter_key(state: State<'_, AppState>, key: String) -> AppResult<crate::secrets::KeyStatus> {
+    let keys = state.keys.clone();
+    blocking(move || keys.set(&key)).await
 }
 
 #[tauri::command]
@@ -368,7 +381,7 @@ pub async fn transcribe(state: State<'_, AppState>, request: TranscribeRequest) 
     let tools = state.tools()?;
     let settings = state.settings.get();
     if settings.transcription_provider == "openrouter" {
-        let client = openrouter::Client::new(&settings.openrouter_api_key, &settings.openrouter_model)?;
+        let client = openrouter::Client::new(&state.keys.key(), &settings.openrouter_model)?;
         let source = request.path.clone();
         let (offset, duration) = (request.offset, request.duration);
         let wav = blocking(move || ai::extract_wav(&tools, Path::new(&source), offset, duration)).await?;
@@ -389,8 +402,7 @@ pub async fn transcribe(state: State<'_, AppState>, request: TranscribeRequest) 
 // ----------------------------------------------------------------------- AI
 
 fn ai_client(state: &AppState) -> AppResult<openrouter::Client> {
-    let settings = state.settings.get();
-    openrouter::Client::new(&settings.openrouter_api_key, &settings.openrouter_model)
+    openrouter::Client::new(&state.keys.key(), &state.settings.get().openrouter_model)
 }
 
 #[tauri::command]
