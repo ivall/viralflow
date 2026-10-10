@@ -1,0 +1,154 @@
+@import "tailwindcss";
+
+@font-face { font-family: "Inter"; src: url("/fonts/Inter.ttf") format("truetype"); font-weight: 100 900; font-display: block; }
+@font-face { font-family: "Manrope"; src: url("/fonts/Manrope.ttf") format("truetype"); font-weight: 200 800; font-display: block; }
+@font-face { font-family: "DM Sans"; src: url("/fonts/DMSans.ttf") format("truetype"); font-weight: 100 1000; font-display: block; }
+@font-face { font-family: "Montserrat"; src: url("/fonts/Montserrat.ttf") format("truetype"); font-weight: 100 900; font-display: block; }
+@font-face { font-family: "Poppins"; src: url("/fonts/Poppins-Regular.ttf") format("truetype"); font-weight: 100 500; font-display: block; }
+@font-face { font-family: "Poppins"; src: url("/fonts/Poppins-Bold.ttf") format("truetype"); font-weight: 600 900; font-display: block; }
+@font-face { font-family: "Rubik"; src: url("/fonts/Rubik.ttf") format("truetype"); font-weight: 300 900; font-display: block; }
+@font-face { font-family: "Roboto Condensed"; src: url("/fonts/RobotoCondensed.ttf") format("truetype"); font-weight: 100 900; font-display: block; }
+@font-face { font-family: "Barlow Condensed"; src: url("/fonts/BarlowCondensed-Regular.ttf") format("truetype"); font-weight: 100 500; font-display: block; }
+@font-face { font-family: "Barlow Condensed"; src: url("/fonts/BarlowCondensed-Bold.ttf") format("truetype"); font-weight: 600 900; font-display: block; }
+@font-face { font-family: "Oswald"; src: url("/fonts/Oswald.ttf") format("truetype"); font-weight: 200 700; font-display: block; }
+@font-face { font-family: "Anton"; src: url("/fonts/Anton-Regular.ttf") format("truetype"); font-weight: 100 900; font-display: block; }
+@font-face { font-family: "Bebas Neue"; src: url("/fonts/BebasNeue-Regular.ttf") format("truetype"); font-weight: 100 900; font-display: block; }
+@font-face { font-family: "Archivo Black"; src: url("/fonts/ArchivoBlack-Regular.ttf") format("truetype"); font-weight: 100 900; font-display: block; }
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+
+  --color-app: #121317;
+  --color-panel: #17181c;
+  --color-raised: #1e1f24;
+  --color-hover: #26272d;
+  --color-line: #2a2c33;
+  --color-line-strong: #3a3c45;
+  --color-fg: #e9eaee;
+  --color-muted: #8d909b;
+  --color-faint: #5f626d;
+  --color-accent: #4cc9f0;
+  --color-accent-ink: #062a36;
+  --color-danger: #f0606b;
+  --color-warn: #e9b44c;
+  --color-ok: #4fd18b;
+
+  --color-clip-video: #4f7cff;
+  --color-clip-image: #8b6cf6;
+  --color-clip-audio: #2fb38a;
+  --color-clip-text: #e2a03f;
+  --color-clip-shape: #d16ba5;
+
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: var(--color-app);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-feature-settings: "tnum" 1, "cv11" 1;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+input,
+textarea,
+[contenteditable="true"] {
+  user-select: text;
+}
+
+@layer base {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #3a3c45 transparent;
+  }
+}
+
+::selection {
+  background: color-mix(in srgb, var(--color-accent) 35%, transparent);
+}
+
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 1px;
+  }
+
+  button {
+    cursor: default;
+  }
+}
+
+@layer components {
+  .field {
+    height: 30px;
+    width: 100%;
+    border-radius: 6px;
+    border: 1px solid var(--color-line);
+    background: var(--color-app);
+    padding: 0 10px;
+    color: var(--color-fg);
+    font-size: 12px;
+    outline: none;
+    transition: border-color 120ms;
+  }
+
+  .field:hover {
+    border-color: var(--color-line-strong);
+  }
+
+  .field:focus {
+    border-color: var(--color-accent);
+  }
+
+  textarea.field {
+    height: auto;
+    padding: 8px 10px;
+    line-height: 1.45;
+    resize: none;
+  }
+}
+
+@layer utilities {
+  /* Horizontal scrolling stays available (wheel, touchpad, Shift+wheel) without a visible bar.
+     Chromium only honours ::-webkit-scrollbar when scrollbar-width/color are auto. */
+  .no-scrollbar-x {
+    scrollbar-width: auto;
+    scrollbar-color: auto;
+  }
+
+  .no-scrollbar-x::-webkit-scrollbar {
+    width: 8px;
+    height: 0;
+  }
+
+  .no-scrollbar-x::-webkit-scrollbar-thumb {
+    border-radius: 4px;
+    background: #3a3c45;
+  }
+
+  .no-scrollbar-x::-webkit-scrollbar-track,
+  .no-scrollbar-x::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0ms !important;
+    animation-duration: 0ms !important;
+  }
+}
