@@ -27,7 +27,7 @@ function decibels(value: number) {
     <p v-if="silent" class="text-xs text-muted">This video has no sound.</p>
     <template v-else>
       <UiSlider :model-value="volume * 100" label="Volume" :display="`${Math.round(volume * 100)}%`" :min="0" :max="200" :step="1" :center="100" @start="editor.beginChange()" @update:model-value="value => editor.updateSelected({ volume: value / 100 }, false)" />
-      <p class="-mt-1 pl-[96px] text-[10px] text-faint">{{ decibels(volume) }}</p>
+      <p class="-mt-1 pl-[96px] text-[11px] text-faint">{{ decibels(volume) }}</p>
       <UiSlider :model-value="item.fadeIn ?? 0" label="Fade in" :display="`${(item.fadeIn ?? 0).toFixed(1)}s`" :min="0" :max="maxFade" :step="0.1" @start="editor.beginChange()" @update:model-value="value => editor.updateSelected({ fadeIn: value }, false)" />
       <UiSlider :model-value="item.fadeOut ?? 0" label="Fade out" :display="`${(item.fadeOut ?? 0).toFixed(1)}s`" :min="0" :max="maxFade" :step="0.1" @start="editor.beginChange()" @update:model-value="value => editor.updateSelected({ fadeOut: value }, false)" />
       <div class="flex gap-2 pt-1">

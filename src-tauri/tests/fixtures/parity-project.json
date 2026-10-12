@@ -27,11 +27,11 @@
     { "id": "t-main", "name": "Main", "kind": "video", "items": [
       { "id": "v1", "trackId": "t-main", "kind": "video", "name": "v1", "assetId": "a", "start": 0, "duration": 3, "sourceIn": 1.5, "speed": 1.5, "fit": "cover", "focus": { "x": 20, "y": 50 }, "effect": "shake" },
       { "id": "v2", "trackId": "t-main", "kind": "video", "name": "v2", "assetId": "b", "start": 3, "duration": 3, "sourceIn": 0, "fit": "cover", "crop": { "x": 0.1, "y": 0.05, "w": 0.8, "h": 0.9 },
-        "transition": { "kind": "zoom", "duration": 0.8 }, "effect": "zoom-in", "adjust": { "saturation": -1, "contrast": 0.4, "brightness": -0.04 } },
+        "transition": { "kind": "zoom", "duration": 0.8 }, "effect": "zoom-in", "effectRange": { "start": 0.5, "duration": 1.5 }, "adjust": { "saturation": -1, "contrast": 0.4, "brightness": -0.04 } },
       { "id": "v3", "trackId": "t-main", "kind": "video", "name": "v3", "assetId": "a", "start": 6, "duration": 2, "fit": "contain",
         "transition": { "kind": "black", "duration": 1 }, "effect": "flash" },
       { "id": "v4", "trackId": "t-main", "kind": "video", "name": "v4", "assetId": "b", "start": 8, "duration": 2, "fit": "fill",
-        "transition": { "kind": "wipe-left", "duration": 0.6 }, "effect": "vhs" }
+        "transition": { "kind": "wipe-left", "duration": 0.6 }, "effect": "vhs", "effectRange": { "start": 0.5, "duration": 1.5 } }
     ]}
   ],
   "export": { "format": "mp4", "codec": "h264", "quality": "high", "resolution": 1080, "fps": 30, "hardware": false }

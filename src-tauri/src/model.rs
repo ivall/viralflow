@@ -29,6 +29,13 @@ pub struct Keyframe {
     pub easing: String,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Default)]
+#[serde(default)]
+pub struct EffectRange {
+    pub start: f64,
+    pub duration: f64,
+}
+
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
 pub struct Animation {
@@ -127,6 +134,7 @@ pub struct TimelineItem {
     pub blend: Option<String>,
     pub adjust: Option<Adjust>,
     pub effect: Option<String>,
+    pub effect_range: Option<EffectRange>,
     pub anim_in: Option<Animation>,
     pub anim_out: Option<Animation>,
     pub transition: Option<Animation>,

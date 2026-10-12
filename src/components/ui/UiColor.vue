@@ -19,7 +19,7 @@ function commitHex() {
 </script>
 
 <template>
-  <div class="flex h-[30px] min-w-0 items-center gap-2 rounded-md border border-line bg-app pl-1 pr-2 transition-colors focus-within:border-accent hover:border-line-strong">
+  <div class="flex h-8 min-w-0 items-center gap-2 rounded-lg border border-line bg-raised pl-1 pr-2 transition-colors focus-within:border-accent hover:border-line-strong">
     <label class="relative size-[22px] shrink-0 overflow-hidden rounded border border-white/10" :style="{ background: modelValue }">
       <input type="color" class="absolute inset-0 cursor-pointer opacity-0" :value="modelValue" :aria-label="label" @focus="emit('start')" @input="emit('update:modelValue', ($event.target as HTMLInputElement).value)">
     </label>

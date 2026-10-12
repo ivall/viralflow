@@ -135,7 +135,7 @@ async function run() {
             </li>
           </ul>
           <UiButton class="mt-2" variant="outline" size="sm" :disabled="running" @click="pick(group.key)">Add files</UiButton>
-          <p class="mt-1.5 text-[10px] leading-3 text-faint">{{ group.hint }}</p>
+          <p class="mt-1.5 text-[11px] leading-3 text-faint">{{ group.hint }}</p>
         </section>
       </div>
       <div class="grid grid-cols-3 gap-3">

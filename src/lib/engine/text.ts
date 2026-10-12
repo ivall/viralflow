@@ -27,7 +27,11 @@ export const DEFAULT_TEXT_STYLE: TextStyle = {
   shadowColor: '#000000',
   shadowOpacity: 0,
   shadowBlur: 12,
-  shadowDistance: 4
+  shadowDistance: 4,
+  highlightMode: 'none',
+  highlightColor: '#ffe14d',
+  highlightTextColor: '',
+  highlightIndex: -1
 }
 
 export function textStyleOf(item: TimelineItem): TextStyle {
@@ -110,10 +114,16 @@ function layoutText(style: TextStyle, canvasWidth: number, scale: number): Layou
   const blockWidth = Math.max(1, ...lines.map(line => line.width))
   const padding = style.backgroundOpacity > 0 ? style.backgroundPadding * scale : 0
   const shadow = style.shadowOpacity > 0 ? (style.shadowBlur + style.shadowDistance) * scale : 0
-  const margin = Math.ceil(Math.max(style.strokeWidth * scale, shadow) + 2 * scale)
+  // A highlight box may stick out past the glyphs of the first or last word.
+  const highlightRoom = hasHighlight(style) && style.highlightMode === 'box' ? style.size * scale * 0.22 : 0
+  const margin = Math.ceil(Math.max(style.strokeWidth * scale, shadow, highlightRoom) + 2 * scale)
   const width = Math.ceil(blockWidth + 2 * padding + 2 * margin)
   const height = Math.ceil(lines.length * lineHeight + 2 * padding + 2 * margin)
   return { lines, blockWidth, lineHeight, ascent, descent, margin, padding, width, height }
+}
+
+function hasHighlight(style: TextStyle) {
+  return (style.highlightMode === 'color' || style.highlightMode === 'box') && style.highlightIndex >= 0
 }
 
 /** Box of a text item in project pixels. */
@@ -143,9 +153,31 @@ export function rasterizeText(item: TimelineItem, canvasWidth: number, scale: nu
   const originX = inset + layout.padding
   const originY = inset + layout.padding
   const shadow = style.shadowOpacity > 0
+  const highlight = hasHighlight(style)
+  let wordIndex = 0
   layout.lines.forEach((line, index) => {
     const x = style.align === 'left' ? originX : style.align === 'right' ? originX + layout.blockWidth - line.width : originX + (layout.blockWidth - line.width) / 2
     const y = originY + index * layout.lineHeight + (layout.lineHeight - layout.ascent - layout.descent) / 2 + layout.ascent
+    // Find the highlighted word on this line (words are counted across lines).
+    let word: { text: string; x: number; width: number } | null = null
+    if (highlight) {
+      for (const match of line.text.matchAll(/\S+/g)) {
+        if (wordIndex === style.highlightIndex) {
+          const offset = ctx.measureText(line.text.slice(0, match.index)).width
+          word = { text: match[0], x: x + offset, width: ctx.measureText(match[0]).width }
+        }
+        wordIndex++
+      }
+    }
+    if (word && style.highlightMode === 'box') {
+      const size = style.size * scale
+      const top = y - layout.ascent + size * 0.1
+      const bottom = y + layout.descent * 0.55
+      ctx.fillStyle = style.highlightColor
+      ctx.beginPath()
+      ctx.roundRect(word.x - size * 0.16, top, word.width + size * 0.32, bottom - top, size * 0.18)
+      ctx.fill()
+    }
     const setShadow = (on: boolean) => {
       ctx.shadowColor = on ? rgba(style.shadowColor, style.shadowOpacity) : 'transparent'
       ctx.shadowBlur = on ? style.shadowBlur * scale : 0
@@ -162,6 +194,11 @@ export function rasterizeText(item: TimelineItem, canvasWidth: number, scale: nu
     ctx.fillStyle = style.color
     ctx.fillText(line.text, x, y)
     setShadow(false)
+    const wordColor = style.highlightMode === 'color' ? style.highlightColor : style.highlightTextColor
+    if (word && wordColor) {
+      ctx.fillStyle = wordColor
+      ctx.fillText(word.text, word.x, y)
+    }
   })
   return canvas
 }

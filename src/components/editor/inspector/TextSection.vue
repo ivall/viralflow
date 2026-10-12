@@ -11,7 +11,8 @@ import UiSelect from '@/components/ui/UiSelect.vue'
 import UiSlider from '@/components/ui/UiSlider.vue'
 import { textStyleOf } from '@/lib/engine/text'
 import { BUNDLED_FONTS, systemFonts, WEIGHT_NAMES, type FontEntry } from '@/lib/fonts'
-import { presetTextStyle, TEXT_PRESETS } from '@/lib/project'
+import { TEXT_PRESETS } from '@/lib/project'
+import { previewWords, textPreviewStyle } from '@/lib/textPreview'
 import type { TextStyle, TimelineItem } from '@/lib/types'
 import { errorMessage, ipc } from '@/services/ipc'
 import { useEditor } from '@/stores/editor'
@@ -52,6 +53,8 @@ const alignOptions = [
   { value: 'right' as const, icon: AlignRight, title: 'Align right' }
 ]
 const isCaption = computed(() => props.item.groupId?.startsWith('captions-'))
+const highlightOptions = [{ value: 'none' as const, label: 'None' }, { value: 'color' as const, label: 'Color' }, { value: 'box' as const, label: 'Box' }]
+const wordCount = computed(() => Math.max(1, style.value.content.split(/\s+/).filter(Boolean).length))
 
 function set(patch: Partial<TextStyle>, record = true) {
   editor.updateText(patch, record)
@@ -68,9 +71,7 @@ function onInput() {
 function applyPreset(id: string) {
   const preset = TEXT_PRESETS.find(candidate => candidate.id === id)
   if (!preset) return
-  editor.beginChange()
-  editor.updateText(presetTextStyle(style.value, preset), false)
-  editor.updateSelected({ animIn: preset.animIn }, false)
+  editor.applyTextPreset(preset)
 }
 
 function applyToAll() {
@@ -109,19 +110,9 @@ defineExpose({ focus })
   </UiSection>
 
   <UiSection title="Style presets" collapsible :default-open="false">
-    <div class="grid grid-cols-2 gap-1.5">
-      <button v-for="preset in TEXT_PRESETS" :key="preset.id" class="flex h-11 items-center justify-center overflow-hidden rounded-md border border-line bg-app px-2 transition-colors hover:border-line-strong" @click="applyPreset(preset.id)">
-        <span
-          class="truncate text-sm"
-          :style="{
-            fontFamily: `'${preset.style.font}'`, fontWeight: preset.style.weight, fontStyle: preset.style.italic ? 'italic' : 'normal', color: preset.style.color ?? '#fff',
-            textTransform: preset.style.uppercase ? 'uppercase' : 'none',
-            WebkitTextStroke: preset.style.strokeWidth ? `1px ${preset.style.strokeColor}` : undefined,
-            background: preset.style.backgroundOpacity ? preset.style.backgroundColor : undefined,
-            padding: preset.style.backgroundOpacity ? '1px 6px' : undefined, borderRadius: '3px',
-            textShadow: preset.style.shadowOpacity ? `0 0 8px ${preset.style.shadowColor}` : undefined
-          }"
-        >{{ preset.label }}</span>
+    <div class="grid max-h-[300px] grid-cols-2 gap-1.5 overflow-y-auto pr-0.5">
+      <button v-for="preset in TEXT_PRESETS" :key="preset.id" class="flex h-12 items-center justify-center overflow-hidden rounded-lg border border-line bg-[#24262e] px-2 transition-colors hover:border-line-strong" :title="preset.label" @click="applyPreset(preset.id)">
+        <span class="truncate" :style="textPreviewStyle(preset.style, 13)"><span v-for="(word, index) in previewWords({ ...preset.style, highlightIndex: 1 }, preset.label)" :key="index" :style="word.style">{{ word.text }}</span></span>
       </button>
     </div>
   </UiSection>
@@ -136,13 +127,23 @@ defineExpose({ focus })
       <UiColor :model-value="style.color" label="Text color" @start="editor.beginChange()" @update:model-value="value => set({ color: value }, false)" />
       <div class="flex gap-1">
         <UiSegmented :model-value="style.align" :options="alignOptions" label="Alignment" @update:model-value="value => set({ align: value })" />
-        <button class="grid size-[30px] place-items-center rounded-md border transition-colors" :class="style.italic ? 'border-accent text-fg' : 'border-line text-muted hover:text-fg'" title="Italic" aria-label="Italic" @click="set({ italic: !style.italic })"><Italic class="size-3.5" /></button>
-        <button class="grid size-[30px] place-items-center rounded-md border transition-colors" :class="style.uppercase ? 'border-accent text-fg' : 'border-line text-muted hover:text-fg'" title="Uppercase" aria-label="Uppercase" @click="set({ uppercase: !style.uppercase })"><CaseUpper class="size-3.5" /></button>
+        <button class="grid size-8 place-items-center rounded-lg border transition-colors" :class="style.italic ? 'border-accent text-fg' : 'border-line text-muted hover:text-fg'" title="Italic" aria-label="Italic" @click="set({ italic: !style.italic })"><Italic class="size-3.5" /></button>
+        <button class="grid size-8 place-items-center rounded-lg border transition-colors" :class="style.uppercase ? 'border-accent text-fg' : 'border-line text-muted hover:text-fg'" title="Uppercase" aria-label="Uppercase" @click="set({ uppercase: !style.uppercase })"><CaseUpper class="size-3.5" /></button>
       </div>
     </div>
     <UiSlider :model-value="style.letterSpacing" label="Spacing" :display="style.letterSpacing.toFixed(0)" :min="-20" :max="60" :step="1" :center="0" @start="editor.beginChange()" @update:model-value="value => set({ letterSpacing: value }, false)" />
     <UiSlider :model-value="style.lineHeight" label="Line height" :display="style.lineHeight.toFixed(2)" :min="0.7" :max="2.5" :step="0.01" @start="editor.beginChange()" @update:model-value="value => set({ lineHeight: value }, false)" />
     <UiSlider :model-value="style.maxWidth" label="Box width" :display="`${Math.round(style.maxWidth)}%`" :min="10" :max="100" :step="1" @start="editor.beginChange()" @update:model-value="value => set({ maxWidth: value }, false)" />
+  </UiSection>
+
+  <UiSection title="Word highlight" collapsible :default-open="style.highlightMode !== 'none'">
+    <UiSegmented :model-value="style.highlightMode" :options="highlightOptions" label="Highlight" @update:model-value="value => set({ highlightMode: value, highlightIndex: style.highlightIndex >= 0 ? style.highlightIndex : 0 })" />
+    <template v-if="style.highlightMode !== 'none'">
+      <UiField label="Color"><UiColor :model-value="style.highlightColor" label="Highlight color" @start="editor.beginChange()" @update:model-value="value => set({ highlightColor: value }, false)" /></UiField>
+      <UiField v-if="style.highlightMode === 'box'" label="Word color"><UiColor :model-value="style.highlightTextColor || style.color" label="Highlighted word color" @start="editor.beginChange()" @update:model-value="value => set({ highlightTextColor: value }, false)" /></UiField>
+      <UiField v-if="!isCaption" label="Word"><UiNumber :model-value="style.highlightIndex + 1" :min="1" :max="wordCount" :step="1" @start="editor.beginChange()" @update:model-value="value => set({ highlightIndex: value - 1 }, false)" /></UiField>
+      <p v-else class="text-2xs leading-4 text-faint">Captions light up each word as it is spoken.</p>
+    </template>
   </UiSection>
 
   <UiSection title="Stroke" collapsible :default-open="style.strokeWidth > 0">

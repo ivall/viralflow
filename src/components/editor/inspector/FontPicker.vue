@@ -60,7 +60,7 @@ function onKey(event: KeyboardEvent) {
   <PopoverRoot v-model:open="open">
     <PopoverTrigger
       aria-label="Font family"
-      class="flex h-[30px] w-full min-w-0 items-center justify-between gap-2 rounded-md border border-line bg-app px-2.5 text-left text-xs text-fg outline-none transition-colors hover:border-line-strong focus-visible:border-accent data-[state=open]:border-accent"
+      class="flex h-8 w-full min-w-0 items-center justify-between gap-2 rounded-md border border-line bg-app px-2.5 text-left text-xs text-fg outline-none transition-colors hover:border-line-strong focus-visible:border-accent data-[state=open]:border-accent"
     >
       <span class="truncate" :style="{ fontFamily: cssFamily(modelValue) }">{{ modelValue }}</span>
       <span v-if="!known && !loading" class="ml-auto shrink-0 text-2xs text-faint">Not installed</span>

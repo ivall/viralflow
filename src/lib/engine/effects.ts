@@ -1,4 +1,4 @@
-import type { EffectKind } from '../types'
+import type { EffectKind, EffectRange, TimelineItem } from '../types'
 import { contrastAndSaturation, brightnessMatrix, IDENTITY, type ColorMatrix } from './color'
 import { clamp, hash01 } from './math'
 
@@ -69,4 +69,31 @@ export function resolveEffect(effect: EffectKind | undefined, elapsed: number, d
     default:
       return IDLE
   }
+}
+
+export const MIN_EFFECT = 0.1
+
+/** The span of the clip an effect covers, clamped to the clip. */
+export function effectWindow(item: Pick<TimelineItem, 'duration' | 'effectRange'>): EffectRange {
+  const range = item.effectRange
+  if (!range) return { start: 0, duration: item.duration }
+  const start = clamp(Number.isFinite(range.start) ? range.start : 0, 0, Math.max(0, item.duration - MIN_EFFECT))
+  const duration = clamp(Number.isFinite(range.duration) ? range.duration : item.duration, Math.min(MIN_EFFECT, item.duration - start), item.duration - start)
+  return { start, duration }
+}
+
+/**
+ * Effect state of a clip `elapsed` seconds after its start. A ranged effect is
+ * idle outside its window, except where the window touches a clip edge (so it
+ * keeps running through a transition overlap like a whole-clip effect).
+ */
+export function resolveItemEffect(item: Pick<TimelineItem, 'duration' | 'effect' | 'effectRange'>, elapsed: number): EffectState {
+  if (!item.effect || item.effect === 'none') return IDLE
+  if (!item.effectRange) return resolveEffect(item.effect, elapsed, item.duration)
+  const window = effectWindow(item)
+  const local = elapsed - window.start
+  const touchesStart = window.start <= 1e-6
+  const touchesEnd = window.start + window.duration >= item.duration - 1e-6
+  if ((local < 0 && !touchesStart) || (local > window.duration && !touchesEnd)) return IDLE
+  return resolveEffect(item.effect, local, window.duration)
 }

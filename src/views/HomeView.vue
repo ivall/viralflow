@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import { save as saveDialog, open as openDialog } from '@tauri-apps/plugin-dialog'
-import { AudioLines, FileUp, FolderOpen, Plus, Search, Settings, Sparkles, TriangleAlert } from '@lucide/vue'
+import { AudioLines, FileUp, FolderOpen, Plus, Search, Settings, TriangleAlert } from '@lucide/vue'
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import AiDraftDialog from '@/components/home/AiDraftDialog.vue'
 import AutoEditDialog from '@/components/home/AutoEditDialog.vue'
 import ProjectCard from '@/components/home/ProjectCard.vue'
 import UiButton from '@/components/ui/UiButton.vue'
@@ -24,7 +23,6 @@ const query = ref('')
 const renaming = ref<ProjectSummary | null>(null)
 const renameDraft = ref('')
 const deleting = ref<ProjectSummary | null>(null)
-const showAiDraft = ref(false)
 const showAutoEdit = ref(false)
 const creating = ref(false)
 
@@ -32,7 +30,6 @@ const visible = computed(() => {
   const text = query.value.trim().toLowerCase()
   return text ? projects.items.filter(project => project.name.toLowerCase().includes(text)) : projects.items
 })
-const aiReady = computed(() => settings.key.hasKey)
 
 onMounted(async () => {
   try {
@@ -122,11 +119,8 @@ async function openCreated(id: string) {
 
 <template>
   <div class="flex h-full flex-col bg-app">
-    <header class="flex h-12 shrink-0 items-center gap-3 border-b border-line px-5">
-      <img src="/app-icon.png" alt="" class="size-6 rounded-md">
-      <span class="text-sm font-semibold tracking-tight">ViralFlow</span>
-      <UiButton class="ml-auto" variant="ghost" size="sm" @click="router.push({ name: 'settings' })"><Settings class="size-4" />Settings</UiButton>
-    </header>
+    <Teleport defer to="#titlebar-left"><span class="text-xs font-semibold tracking-tight">ViralFlow</span></Teleport>
+    <Teleport defer to="#titlebar-right"><UiButton variant="ghost" size="sm" @click="router.push({ name: 'settings' })"><Settings class="size-4" />Settings</UiButton></Teleport>
 
     <main class="min-h-0 flex-1 overflow-y-auto">
       <div class="mx-auto max-w-[1200px] px-8 pb-16 pt-8">
@@ -158,7 +152,6 @@ async function openCreated(id: string) {
           </div>
           <div class="mt-3 flex flex-wrap gap-2">
             <UiButton variant="outline" @click="importProjectFile"><FileUp class="size-3.5" />Open project file</UiButton>
-            <UiButton variant="outline" :title="aiReady ? undefined : 'Add an OpenRouter key in Settings'" @click="showAiDraft = true"><Sparkles class="size-3.5" />Draft from a topic</UiButton>
             <UiButton variant="outline" @click="showAutoEdit = true"><AudioLines class="size-3.5" />Auto-edit voiceovers</UiButton>
           </div>
         </section>
@@ -196,7 +189,6 @@ async function openCreated(id: string) {
     </UiDialog>
 
     <UiConfirm :open="Boolean(deleting)" title="Delete project?" :description="`“${deleting?.name}” will be deleted. Your media files stay where they are.`" confirm-label="Delete project" danger @update:open="value => { if (!value) deleting = null }" @confirm="confirmDelete" />
-    <AiDraftDialog v-model:open="showAiDraft" @created="openCreated" />
     <AutoEditDialog v-model:open="showAutoEdit" @created="openCreated" />
   </div>
 </template>

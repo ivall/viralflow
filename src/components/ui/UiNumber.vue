@@ -77,8 +77,8 @@ function startScrub(event: PointerEvent) {
 </script>
 
 <template>
-  <label class="flex h-[30px] min-w-0 items-center rounded-md border border-line bg-app px-2 transition-colors focus-within:border-accent hover:border-line-strong">
-    <span v-if="label" class="mr-1.5 shrink-0 cursor-ew-resize text-2xs text-faint" @pointerdown="startScrub">{{ label }}</span>
+  <label class="flex h-8 min-w-0 items-center rounded-lg border border-line bg-raised px-2.5 transition-colors focus-within:border-accent hover:border-line-strong">
+    <span v-if="label" class="mr-1.5 shrink-0 cursor-ew-resize text-2xs text-muted" @pointerdown="startScrub">{{ label }}</span>
     <input
       v-model="draft"
       class="h-full min-w-0 flex-1 bg-transparent text-xs tabular-nums text-fg outline-none"

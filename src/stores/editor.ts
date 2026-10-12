@@ -1,4 +1,4 @@
-import { defineStore } from 'pinia'
+import { acceptHMRUpdate, defineStore } from 'pinia'
 import { computed, ref, shallowRef, toRaw, watch } from 'vue'
 import { defaultInDuration, defaultOutDuration } from '@/lib/engine/animation'
 import { adjacentKeyframe, normalizeTransform, patchKeyframeAt, retimeKeyframes, setKeyframeEasing, sortedKeyframes, toggleKeyframe, trimKeyframes } from '@/lib/engine/keyframes'
@@ -6,10 +6,11 @@ import { clamp, uid } from '@/lib/engine/math'
 import { contentEnd } from '@/lib/engine/scene'
 import { DEFAULT_TEXT_STYLE } from '@/lib/engine/text'
 import { DEFAULT_TRANSITION, repairTransitions, transitionDuration } from '@/lib/engine/transitions'
+import { effectWindow, MIN_EFFECT } from '@/lib/engine/effects'
 import { migrateProject } from '@/lib/migrate'
-import { CAPTION_PRESET, createTrack, mediaItemDefaults, trackKindFor } from '@/lib/project'
+import { CAPTION_PRESET, createTrack, mediaItemDefaults, presetTextStyle, trackKindFor, type TextPreset } from '@/lib/project'
 import { MIN_CLIP_DURATION, placeTimelineSelection, placeTimelineSpan, repairTimelineLayout, rippleTimelineResize, trimTimelineSpan, type TimelineMoveMode } from '@/lib/timeline/placement'
-import type { AnimationInKind, AnimationOutKind, CaptionCue, Easing, ExportSettings, ItemKind, MediaAsset, Project, TextStyle, TimelineItem, Track, TrackKind, Transform, TransitionKind } from '@/lib/types'
+import type { AnimationInKind, AnimationOutKind, CaptionCue, EffectKind, EffectRange, Easing, ExportSettings, ItemKind, MediaAsset, Project, TextStyle, TimelineItem, Track, TrackKind, Transform, TransitionKind } from '@/lib/types'
 import { errorMessage, ipc } from '@/services/ipc'
 import { createPreview } from '@/services/media'
 import { useSettings } from './settings'
@@ -484,10 +485,26 @@ export const useEditor = defineStore('editor', () => {
     const targets = selectedItems.value.filter(item => item.kind === 'text')
     if (!targets.length) return
     if (record) snapshot()
+    // Style changes go to every selected text; the words only to the one being edited.
+    const { content, ...style } = patch
     for (const item of targets) {
       if (!editable(item.id)) continue
-      item.text = { ...DEFAULT_TEXT_STYLE, ...item.text, ...patch }
-      if (patch.content !== undefined) item.name = patch.content.split('\n')[0].slice(0, 40) || 'Text'
+      const own = content !== undefined && item.id === selectedItem.value?.id
+      item.text = { ...DEFAULT_TEXT_STYLE, ...item.text, ...style, ...(own ? { content } : {}) }
+      if (own) item.name = content.split('\n')[0].slice(0, 40) || 'Text'
+    }
+    touched()
+  }
+
+  /** Gives every selected text the preset's look; each keeps its own words and layout. */
+  function applyTextPreset(preset: TextPreset) {
+    const targets = selectedItems.value.filter(item => item.kind === 'text' && editable(item.id))
+    if (!targets.length) return
+    snapshot()
+    for (const item of targets) {
+      const continued = !item.animIn && (item.text?.highlightIndex ?? -1) > 0 && Boolean(item.groupId?.startsWith('captions-'))
+      item.text = presetTextStyle({ ...DEFAULT_TEXT_STYLE, ...item.text }, preset)
+      item.animIn = preset.animIn && !continued ? { ...preset.animIn } : undefined
     }
     touched()
   }
@@ -517,6 +534,10 @@ export const useEditor = defineStore('editor', () => {
     item.speed = speed
     item.duration = layout.duration
     if (item.keyframes?.length) item.keyframes = retimeKeyframes(item.keyframes, before, item.duration)
+    if (item.effectRange && before > 0) {
+      const ratio = item.duration / before
+      item.effectRange = { start: item.effectRange.start * ratio, duration: item.effectRange.duration * ratio }
+    }
     for (const neighbour of track.items) {
       const start = layout.starts.get(neighbour.id)
       if (start !== undefined) neighbour.start = start
@@ -563,7 +584,7 @@ export const useEditor = defineStore('editor', () => {
   }
 
   /** Trims one edge. `edgeTime` is the requested timeline position of that edge. */
-  function trimItem(id: string, edge: 'start' | 'end', edgeTime: number, original: { start: number; duration: number; sourceIn: number }) {
+  function trimItem(id: string, edge: 'start' | 'end', edgeTime: number, original: { start: number; duration: number; sourceIn: number; effectRange?: EffectRange }) {
     const found = editable(id)
     if (!found) return
     const { item, track } = found
@@ -587,6 +608,11 @@ export const useEditor = defineStore('editor', () => {
       item.duration = placement.duration
       if (before.keyframes?.length && placement.duration < original.duration) item.keyframes = trimKeyframes(before, 0, placement.duration)
     }
+    if (original.effectRange) {
+      // Ranged effects stay where they are on the timeline while the clip edge moves.
+      const shift = item.start - original.start
+      item.effectRange = effectWindow({ duration: item.duration, effectRange: { start: original.effectRange.start - shift, duration: original.effectRange.duration + Math.min(0, original.effectRange.start - shift) } })
+    }
     repairAll(track)
     touched()
   }
@@ -608,7 +634,7 @@ export const useEditor = defineStore('editor', () => {
     const time = currentTime.value
     if (time <= item.start + MIN_CLIP_DURATION || time >= item.start + item.duration - MIN_CLIP_DURATION) return
     snapshot()
-    trimItem(item.id, edge, time, { start: item.start, duration: item.duration, sourceIn: item.sourceIn ?? 0 })
+    trimItem(item.id, edge, time, { start: item.start, duration: item.duration, sourceIn: item.sourceIn ?? 0, effectRange: item.effectRange && { ...item.effectRange } })
   }
 
   // ------------------------------------------------------------ structural edits
@@ -635,6 +661,16 @@ export const useEditor = defineStore('editor', () => {
       if (item.animOut) item.animOut = { kind: 'none', duration: 0 }
       if (item.fadeOut) { right.fadeOut = item.fadeOut; item.fadeOut = 0 }
       if (right.fadeIn) right.fadeIn = 0
+      if (before.effect && before.effectRange) {
+        const window = effectWindow(before)
+        const leftEnd = Math.min(offset, window.start + window.duration)
+        if (leftEnd - window.start >= MIN_EFFECT) item.effectRange = { start: window.start, duration: leftEnd - window.start }
+        else { delete item.effect; delete item.effectRange }
+        const rightStart = Math.max(0, window.start - offset)
+        const rightEnd = window.start + window.duration - offset
+        if (rightEnd - rightStart >= MIN_EFFECT) right.effectRange = { start: rightStart, duration: rightEnd - rightStart }
+        else { delete right.effect; delete right.effectRange }
+      }
       item.duration = offset
       item.keyframes = before.keyframes?.length ? trimKeyframes(before, 0, offset) : undefined
       track.items.push(right)
@@ -831,6 +867,33 @@ export const useEditor = defineStore('editor', () => {
     touched()
   }
 
+  // ------------------------------------------------------------ effects
+
+  /** Puts an effect on clips. A new effect covers the whole clip; `range` limits it. */
+  function setEffect(ids: string[], kind: EffectKind, range?: EffectRange) {
+    const targets = ids.map(editable).filter(found => found && found.item.kind !== 'audio' && found.item.kind !== 'shape') as Array<{ item: TimelineItem; track: Track }>
+    if (!targets.length) return
+    snapshot()
+    for (const { item } of targets) {
+      if (kind === 'none') { delete item.effect; delete item.effectRange; continue }
+      if (range) item.effectRange = effectWindow({ duration: item.duration, effectRange: range })
+      else if (item.effect !== kind) delete item.effectRange
+      item.effect = kind
+    }
+    touched()
+  }
+
+  /** Moves or stretches the part of the clip an effect covers (relative to the clip start). */
+  function setEffectRange(itemId: string, range: EffectRange, record = false) {
+    const found = editable(itemId)
+    if (!found?.item.effect) return
+    if (record) snapshot()
+    const window = effectWindow({ duration: found.item.duration, effectRange: range })
+    if (window.start <= 1e-6 && window.duration >= found.item.duration - 1e-6) delete found.item.effectRange
+    else found.item.effectRange = window
+    touched()
+  }
+
   // ------------------------------------------------------------ tracks
 
   function addTrack(kind: TrackKind) {
@@ -897,8 +960,8 @@ export const useEditor = defineStore('editor', () => {
       duration: Math.max(MIN_CLIP_DURATION, cue.duration / options.speed),
       groupId,
       transform: normalizeTransform({ x: 50, y: options.y ?? 72 }),
-      text: { ...style, content: cue.text },
-      animIn: { kind: 'pop', duration: 0.18 }
+      text: { ...style, content: cue.text, highlightIndex: cue.highlightIndex ?? -1 },
+      animIn: cue.continued ? undefined : { kind: 'pop', duration: 0.18 }
     }))
     const occupied = track.items.filter(item => items.some(cue => item.start < cue.start + cue.duration && cue.start < item.start + item.duration))
     if (occupied.length) {
@@ -923,9 +986,12 @@ export const useEditor = defineStore('editor', () => {
     for (const track of tracks.value) {
       for (const candidate of track.items) {
         if (candidate.groupId !== item.groupId || candidate.id === item.id || candidate.kind !== 'text') continue
-        candidate.text = { ...structuredClone(toRaw(item.text)), content: candidate.text?.content ?? '' }
+        // Word-highlight captions keep which word is lit and stay still between words.
+        const highlightIndex = candidate.text?.highlightIndex ?? -1
+        const continued = !candidate.animIn && highlightIndex > 0
+        candidate.text = { ...structuredClone(toRaw(item.text)), content: candidate.text?.content ?? '', highlightIndex }
         candidate.transform = normalizeTransform(item.transform)
-        candidate.animIn = item.animIn ? { ...item.animIn } : undefined
+        candidate.animIn = item.animIn && !continued ? { ...item.animIn } : undefined
         candidate.animOut = item.animOut ? { ...item.animOut } : undefined
         count++
       }
@@ -976,11 +1042,11 @@ export const useEditor = defineStore('editor', () => {
     play, stop, togglePlay, seek, stepFrames,
     select, selectMany, selectAll,
     addItem, addAsset, addAssetsSequence, registerAssets, updateAsset, removeAsset,
-    updateSelected, updateItem, updateText, setTransform,
+    updateSelected, updateItem, updateText, applyTextPreset, setTransform,
     moveItem, moveItems, trimItem, nudgeSelected, trimToPlayhead,
     splitAt, deleteSelected, duplicateSelected, copySelected, cutSelected, paste, groupSelected, ungroupSelected, toggleItemFlag,
     toggleKeyframeAtPlayhead, jumpKeyframe, setKeyframeEasingAtPlayhead, moveKeyframe, clearKeyframes,
-    setAnimation, setTransition, setTransitionForTrack,
+    setAnimation, setTransition, setTransitionForTrack, setEffect, setEffectRange,
     addTrack, updateTrack, removeTrack, moveTrack,
     applyCaptions, applyStyleToGroup,
     rename, setCanvas, setBackground, updateExport
@@ -989,3 +1055,6 @@ export const useEditor = defineStore('editor', () => {
 
 export type EditorStore = ReturnType<typeof useEditor>
 export type { TimelineMoveMode }
+
+// Keep the store's actions current while editing in dev (no stale instance after hot reload).
+if (import.meta.hot) import.meta.hot.accept(acceptHMRUpdate(useEditor, import.meta.hot))

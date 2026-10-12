@@ -38,7 +38,7 @@ function onShape(event: PointerEvent, kind: ShapeKind, label: string) {
           <span v-if="shape.kind === 'blur'" class="h-5 w-8 rounded-md border border-white/20 bg-white/10 backdrop-blur" />
           <span v-else class="block" :class="shape.kind === 'circle' ? 'size-6 rounded-full' : shape.kind === 'line' ? 'h-0.5 w-8 rounded-full' : 'h-4 w-8 rounded'" :style="{ background: shape.color }" />
         </span>
-        <span class="w-full truncate text-center text-[10px] text-muted">{{ shape.label }}</span>
+        <span class="w-full truncate text-center text-[11px] text-muted">{{ shape.label }}</span>
       </button>
     </div>
     <template v-for="group in GROUPS" :key="group.title">

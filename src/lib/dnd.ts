@@ -1,5 +1,5 @@
 import { reactive } from 'vue'
-import type { MediaAsset, TimelineItem, TransitionKind } from './types'
+import type { EffectKind, MediaAsset, TimelineItem, TransitionKind } from './types'
 
 /**
  * Pointer-based drag & drop between panels. WebView2 suppresses HTML5 drag
@@ -10,6 +10,7 @@ export type DragPayload =
   | { type: 'asset'; asset: MediaAsset }
   | { type: 'item'; defaults: Partial<TimelineItem> & { kind: TimelineItem['kind'] }; duration: number }
   | { type: 'transition'; kind: TransitionKind }
+  | { type: 'effect'; kind: EffectKind }
   | { type: 'files'; paths: string[] }
 
 export interface DragState {

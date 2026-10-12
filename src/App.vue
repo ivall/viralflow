@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { TooltipProvider } from 'reka-ui'
 import { onMounted } from 'vue'
+import TitleBar from '@/components/TitleBar.vue'
 import UiToaster from '@/components/ui/UiToaster.vue'
 import { useSettings } from '@/stores/settings'
 
@@ -10,7 +11,10 @@ onMounted(() => settings.load())
 
 <template>
   <TooltipProvider :delay-duration="450">
-    <RouterView v-if="settings.loaded" />
+    <div class="flex h-full flex-col">
+      <TitleBar />
+      <div class="min-h-0 flex-1"><RouterView v-if="settings.loaded" /></div>
+    </div>
     <UiToaster />
   </TooltipProvider>
 </template>

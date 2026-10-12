@@ -26,14 +26,14 @@ function select(value: unknown) {
     <SelectTrigger
       v-bind="$attrs"
       :aria-label="label"
-      class="flex w-full min-w-0 items-center justify-between gap-2 rounded-md border border-line bg-app px-2.5 text-left text-xs text-fg outline-none transition-colors hover:border-line-strong focus-visible:border-accent data-[state=open]:border-accent"
-      :class="size === 'sm' ? 'h-7' : 'h-[30px]'"
+      class="flex w-full min-w-0 items-center justify-between gap-2 rounded-lg border border-line bg-raised px-2.5 text-left text-xs text-fg outline-none transition-colors hover:border-line-strong focus-visible:border-accent data-[state=open]:border-accent"
+      :class="size === 'sm' ? 'h-7' : 'h-8'"
     >
       <SelectValue class="truncate" />
       <ChevronDown class="size-3.5 shrink-0 text-muted" />
     </SelectTrigger>
     <SelectPortal>
-      <SelectContent position="popper" :side-offset="4" class="z-[200] max-h-[min(360px,var(--reka-select-content-available-height))] min-w-[var(--reka-select-trigger-width)] overflow-hidden rounded-lg border border-line bg-raised p-1 shadow-2xl">
+      <SelectContent position="popper" :side-offset="4" class="z-[200] max-h-[min(360px,var(--reka-select-content-available-height))] min-w-[var(--reka-select-trigger-width)] overflow-hidden rounded-xl border border-line-strong bg-raised p-1 shadow-2xl">
         <SelectViewport>
           <SelectItem v-for="option in options" :key="String(option.value)" :value="String(option.value)" class="relative flex h-8 cursor-default items-center rounded-md pl-7 pr-3 text-xs text-fg outline-none data-[highlighted]:bg-hover">
             <SelectItemIndicator class="absolute left-2"><Check class="size-3.5 text-accent" /></SelectItemIndicator>

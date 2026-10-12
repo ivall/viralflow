@@ -10,7 +10,7 @@ const emit = defineEmits<{ select: [id: string] }>()
   <DropdownMenuRoot :modal="false">
     <DropdownMenuTrigger as-child><slot /></DropdownMenuTrigger>
     <DropdownMenuPortal>
-      <DropdownMenuContent :side="side" :align="align" :side-offset="4" class="z-[200] min-w-[180px] rounded-lg border border-line bg-raised p-1 shadow-2xl">
+      <DropdownMenuContent :side="side" :align="align" :side-offset="4" class="z-[200] min-w-[190px] rounded-xl border border-line-strong bg-raised p-1 shadow-2xl">
         <template v-for="item in items" :key="item.id">
           <DropdownMenuSeparator v-if="item.separatorBefore" class="my-1 h-px bg-line" />
           <DropdownMenuItem

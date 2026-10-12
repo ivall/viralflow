@@ -69,7 +69,7 @@ async function onPointer(event: PointerEvent, sound: { name: string; path: strin
           </button>
           <AudioLines class="size-3.5 text-clip-audio" />
           <span class="min-w-0 flex-1 truncate text-xs">{{ sound.name }}</span>
-          <span class="text-[10px] tabular-nums text-faint">{{ formatDuration(sound.duration) }}</span>
+          <span class="text-[11px] tabular-nums text-faint">{{ formatDuration(sound.duration) }}</span>
           <button class="grid size-6 place-items-center rounded text-muted opacity-0 hover:bg-raised hover:text-fg group-hover:opacity-100" aria-label="Add at playhead" @pointerdown.stop @click="add(sound.path)"><Plus class="size-3.5" /></button>
         </li>
       </ul>

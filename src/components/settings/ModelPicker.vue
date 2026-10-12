@@ -118,7 +118,7 @@ function useTyped() {
         <p class="text-2xs text-muted">{{ error }}</p>
         <UiButton variant="outline" size="sm" @click="load(true)">Try again</UiButton>
       </div>
-      <div v-if="!error && catalogue.length && !speech" class="sticky top-0 z-10 grid grid-cols-[1fr_auto_auto_auto] gap-4 border-b border-line bg-panel px-5 py-1.5 text-[10px] text-faint">
+      <div v-if="!error && catalogue.length && !speech" class="sticky top-0 z-10 grid grid-cols-[1fr_auto_auto_auto] gap-4 border-b border-line bg-panel px-5 py-1.5 text-[11px] text-faint">
         <span>Model</span><span class="w-14 text-right">Context</span><span class="w-16 text-right">Input / 1M</span><span class="w-16 text-right">Output / 1M</span>
       </div>
       <ul v-if="!error && catalogue.length" role="listbox" aria-label="Models">

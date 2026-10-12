@@ -15,6 +15,12 @@ const aspectOptions = ASPECT_PRESETS.map(preset => ({ value: preset.id, label: `
 const aspect = computed(() => ASPECT_PRESETS.find(preset => preset.width === project.value.width && preset.height === project.value.height)?.id ?? 'custom')
 const fpsOptions = ([24, 25, 30, 50, 60] as Fps[]).map(value => ({ value, label: `${value} fps` }))
 const clips = computed(() => project.value.tracks.reduce((sum, track) => sum + track.items.length, 0))
+const stats = computed(() => [
+  { label: 'Length', value: formatDuration(editor.playbackEnd) },
+  { label: 'Clips', value: String(clips.value) },
+  { label: 'Tracks', value: String(project.value.tracks.length) },
+  { label: 'Media files', value: String(project.value.assets.length) }
+])
 
 function setAspect(id: string) {
   const preset = ASPECT_PRESETS.find(candidate => candidate.id === id)
@@ -38,12 +44,12 @@ function setAspect(id: string) {
     </UiField>
   </UiSection>
   <UiSection title="Overview">
-    <dl class="grid grid-cols-2 gap-y-1.5 text-xs">
-      <dt class="text-muted">Length</dt><dd class="text-right tabular-nums">{{ formatDuration(editor.playbackEnd) }}</dd>
-      <dt class="text-muted">Clips</dt><dd class="text-right tabular-nums">{{ clips }}</dd>
-      <dt class="text-muted">Tracks</dt><dd class="text-right tabular-nums">{{ project.tracks.length }}</dd>
-      <dt class="text-muted">Media files</dt><dd class="text-right tabular-nums">{{ project.assets.length }}</dd>
+    <dl class="divide-y divide-line text-xs">
+      <div v-for="stat in stats" :key="stat.label" class="flex h-8 items-center justify-between">
+        <dt class="text-muted">{{ stat.label }}</dt>
+        <dd class="tabular-nums text-fg">{{ stat.value }}</dd>
+      </div>
     </dl>
-    <p class="pt-1 text-2xs leading-4 text-faint">Select a clip on the timeline or in the preview to edit it.</p>
   </UiSection>
+  <p class="px-4 pb-4 text-2xs leading-4 text-faint">Select a clip on the timeline or in the preview to edit it.</p>
 </template>

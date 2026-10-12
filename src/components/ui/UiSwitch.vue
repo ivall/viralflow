@@ -8,9 +8,9 @@ const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>()
 <template>
   <SwitchRoot
     :model-value="modelValue" :aria-label="label"
-    class="relative h-[18px] w-8 shrink-0 rounded-full bg-line transition-colors data-[state=checked]:bg-accent"
+    class="relative h-5 w-9 shrink-0 rounded-full bg-line-strong transition-colors data-[state=checked]:bg-accent"
     @update:model-value="value => emit('update:modelValue', value)"
   >
-    <SwitchThumb class="block size-3.5 translate-x-0.5 rounded-full bg-fg shadow transition-transform data-[state=checked]:translate-x-[16px] data-[state=checked]:bg-accent-ink" />
+    <SwitchThumb class="block size-4 translate-x-0.5 rounded-full bg-white shadow transition-transform data-[state=checked]:translate-x-[18px]" />
   </SwitchRoot>
 </template>

@@ -1,4 +1,4 @@
-import { defineStore } from 'pinia'
+import { acceptHMRUpdate, defineStore } from 'pinia'
 import { ref } from 'vue'
 import { uid } from '@/lib/engine/math'
 import { migrateProject } from '@/lib/migrate'
@@ -54,3 +54,6 @@ export const useProjects = defineStore('projects', () => {
 
   return { items, loading, refresh, create, remove, duplicate, rename, importFile }
 })
+
+// Keep the store's actions current while editing in dev (no stale instance after hot reload).
+if (import.meta.hot) import.meta.hot.accept(acceptHMRUpdate(useProjects, import.meta.hot))

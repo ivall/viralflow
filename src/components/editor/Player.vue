@@ -328,7 +328,12 @@ defineExpose({ requestRender })
 </script>
 
 <template>
-  <section ref="stage" class="flex min-w-0 flex-1 flex-col bg-app">
+  <section ref="stage" class="surface flex min-w-0 flex-1 flex-col overflow-hidden">
+    <header class="flex h-12 shrink-0 items-center gap-3 border-b border-line px-4">
+      <h2 class="text-sm font-semibold">Preview</h2>
+      <span v-if="project" class="mx-auto text-xs tabular-nums text-faint">{{ project.width }} × {{ project.height }} · {{ project.fps }} fps</span>
+      <span class="w-[60px]" />
+    </header>
     <div ref="viewport" class="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden" :class="drag.active && 'ring-1 ring-inset ring-accent/40'" @pointerdown.self="editor.select(null)">
       <div v-if="project" class="relative shadow-[0_0_0_1px_rgba(255,255,255,0.06)]" :style="{ width: `${view.width}px`, height: `${view.height}px` }">
         <canvas ref="canvas" class="block size-full" @pointerdown="onCanvasPointer" @dblclick="onDoubleClick" />
@@ -338,7 +343,7 @@ defineExpose({ requestRender })
           <line v-if="guides.x !== null" :x1="guides.x * projectScale" :x2="guides.x * projectScale" y1="0" :y2="view.height" stroke="#f472b6" stroke-width="1" />
           <line v-if="guides.y !== null" :y1="guides.y * projectScale" :y2="guides.y * projectScale" x1="0" :x2="view.width" stroke="#f472b6" stroke-width="1" />
           <g v-for="handle in handles" :key="handle.id">
-            <path :d="polygonPath(handle.points)" fill="none" :stroke="handle.primary ? '#4cc9f0' : 'rgba(76,201,240,.55)'" stroke-width="1.5" />
+            <path :d="polygonPath(handle.points)" fill="none" :stroke="handle.primary ? '#6b97e8' : 'rgba(107,151,232,.55)'" stroke-width="1.5" />
           </g>
         </svg>
         <template v-for="handle in handles" :key="`h-${handle.id}`">
@@ -365,28 +370,28 @@ defineExpose({ requestRender })
       <div v-if="empty" class="absolute flex flex-col items-center gap-3 text-center">
         <p class="text-sm font-medium text-fg">Start by adding media</p>
         <p class="max-w-64 text-xs text-muted">Import videos, photos or music, or drag files from your computer anywhere into the editor.</p>
-        <button class="mt-1 flex h-9 items-center gap-2 rounded-md bg-accent px-4 text-xs font-semibold text-accent-ink hover:bg-[#6fd5f4]" @click="importMedia"><Upload class="size-4" />Import media</button>
+        <button class="mt-1 flex h-9 items-center gap-2 rounded-md bg-accent px-4 text-xs font-semibold text-accent-ink hover:bg-accent-hover" @click="importMedia"><Upload class="size-4" />Import media</button>
       </div>
     </div>
 
-    <footer class="flex h-11 shrink-0 items-center gap-1 border-t border-line px-3">
-      <span class="w-36 text-xs tabular-nums"><span class="text-fg">{{ formatTime(editor.currentTime, editor.fps) }}</span> <span class="text-faint">/ {{ formatTime(editor.playbackEnd, editor.fps) }}</span></span>
+    <footer class="flex h-14 shrink-0 items-center gap-1 border-t border-line px-3">
+      <span class="flex w-48 items-center gap-2 text-xs tabular-nums"><span class="rounded-lg bg-raised px-2.5 py-1.5 font-medium text-fg">{{ formatTime(editor.currentTime, editor.fps) }}</span><span class="text-faint">/ {{ formatTime(editor.playbackEnd, editor.fps) }}</span></span>
       <div class="mx-auto flex items-center gap-0.5">
-        <UiIconButton label="Go to start" shortcut="Home" size="sm" @click="editor.seek(0)"><SkipBack class="size-3.5" /></UiIconButton>
-        <UiIconButton label="Previous frame" shortcut="←" size="sm" @click="editor.stepFrames(-1)"><StepBack class="size-3.5" /></UiIconButton>
-        <UiIconButton :label="editor.playing ? 'Pause' : 'Play'" shortcut="Space" variant="secondary" @click="pool.unlockAudio(); editor.togglePlay()">
-          <Pause v-if="editor.playing" class="size-4 fill-current" /><Play v-else class="size-4 fill-current" />
+        <UiIconButton label="Go to start" shortcut="Home" @click="editor.seek(0)"><SkipBack class="size-4" /></UiIconButton>
+        <UiIconButton label="Previous frame" shortcut="←" @click="editor.stepFrames(-1)"><StepBack class="size-4" /></UiIconButton>
+        <UiIconButton :label="editor.playing ? 'Pause' : 'Play'" shortcut="Space" variant="primary" class="mx-1 !size-9 !rounded-full" @click="pool.unlockAudio(); editor.togglePlay()">
+          <Pause v-if="editor.playing" class="size-4 fill-current" /><Play v-else class="ml-0.5 size-4 fill-current" />
         </UiIconButton>
-        <UiIconButton label="Next frame" shortcut="→" size="sm" @click="editor.stepFrames(1)"><StepForward class="size-3.5" /></UiIconButton>
-        <UiIconButton label="Go to end" shortcut="End" size="sm" @click="editor.seek(editor.playbackEnd)"><SkipForward class="size-3.5" /></UiIconButton>
+        <UiIconButton label="Next frame" shortcut="→" @click="editor.stepFrames(1)"><StepForward class="size-4" /></UiIconButton>
+        <UiIconButton label="Go to end" shortcut="End" @click="editor.seek(editor.playbackEnd)"><SkipForward class="size-4" /></UiIconButton>
       </div>
-      <div class="flex w-36 items-center justify-end gap-0.5">
+      <div class="flex w-48 items-center justify-end gap-0.5">
         <UiMenu v-if="project" :items="aspectItems" side="top" @select="setAspect">
-          <button class="h-7 rounded-md px-2 text-xs text-muted hover:bg-hover hover:text-fg" aria-label="Canvas ratio">{{ aspectLabel(project.width, project.height) }}</button>
+          <button class="h-8 rounded-lg bg-raised px-2.5 text-xs font-medium text-fg hover:bg-hover" aria-label="Canvas ratio">{{ aspectLabel(project.width, project.height) }}</button>
         </UiMenu>
-        <UiIconButton label="Grid" size="sm" :active="grid" @click="grid = !grid"><Grid3x3 class="size-3.5" /></UiIconButton>
-        <UiIconButton :label="muted ? 'Unmute preview' : 'Mute preview'" size="sm" @click="muted = !muted"><VolumeX v-if="muted" class="size-3.5" /><Volume2 v-else class="size-3.5" /></UiIconButton>
-        <UiIconButton :label="fullscreen ? 'Exit full screen' : 'Full screen'" size="sm" @click="toggleFullscreen"><Shrink v-if="fullscreen" class="size-3.5" /><Expand v-else class="size-3.5" /></UiIconButton>
+        <UiIconButton label="Grid" :active="grid" @click="grid = !grid"><Grid3x3 class="size-4" /></UiIconButton>
+        <UiIconButton :label="muted ? 'Unmute preview' : 'Mute preview'" @click="muted = !muted"><VolumeX v-if="muted" class="size-4" /><Volume2 v-else class="size-4" /></UiIconButton>
+        <UiIconButton :label="fullscreen ? 'Exit full screen' : 'Full screen'" @click="toggleFullscreen"><Shrink v-if="fullscreen" class="size-4" /><Expand v-else class="size-4" /></UiIconButton>
       </div>
     </footer>
   </section>

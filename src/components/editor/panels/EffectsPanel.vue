@@ -2,6 +2,7 @@
 import { Ban } from '@lucide/vue'
 import { computed } from 'vue'
 import UiButton from '@/components/ui/UiButton.vue'
+import { beginDrag } from '@/lib/dnd'
 import { EFFECTS } from '@/lib/engine/effects'
 import type { EffectKind } from '@/lib/types'
 import { useEditor } from '@/stores/editor'
@@ -17,14 +18,18 @@ function apply(kind: EffectKind) {
     useToasts().show('Select a video, photo or text clip first')
     return
   }
-  editor.updateSelected({ effect: kind === 'none' ? undefined : kind })
+  editor.setEffect(targets.value.map(item => item.id), kind)
+}
+
+function onPointer(event: PointerEvent, kind: EffectKind, label: string) {
+  beginDrag(event, { type: 'effect', kind }, label, () => apply(kind))
 }
 </script>
 
 <template>
   <div class="h-full overflow-y-auto p-3">
     <p class="mb-3 text-2xs leading-4 text-muted">
-      {{ targets.length ? `Click an effect to apply it to ${targets.length === 1 ? 'the selected clip' : `${targets.length} selected clips`}.` : 'Select a video, photo or text clip, then click an effect.' }}
+      Drag an effect onto a clip{{ targets.length ? `, or click to apply it to ${targets.length === 1 ? 'the selected clip' : `${targets.length} selected clips`}` : '' }}. Move it or drag its edges on the timeline to choose when it plays.
     </p>
     <div class="grid grid-cols-3 gap-2">
       <button
@@ -32,12 +37,12 @@ function apply(kind: EffectKind) {
         class="group flex flex-col gap-1 rounded-md p-1 text-left"
         :class="targets.length && current === effect.kind ? 'bg-accent/10' : 'hover:bg-hover'"
         :title="effect.description"
-        @click="apply(effect.kind)"
+        @pointerdown="onPointer($event, effect.kind, effect.label)"
       >
         <span class="glyph block aspect-video w-full overflow-hidden rounded border-2" :class="targets.length && current === effect.kind ? 'border-accent' : 'border-transparent'" :data-effect="effect.kind">
           <span class="scene"><span class="sun" /><span class="hill" /></span>
         </span>
-        <span class="truncate text-[10px] text-muted group-hover:text-fg">{{ effect.label }}</span>
+        <span class="truncate text-[11px] text-muted group-hover:text-fg">{{ effect.label }}</span>
       </button>
     </div>
     <div class="mt-4 border-t border-line pt-3">

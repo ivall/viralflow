@@ -98,10 +98,8 @@ async function saveKey(next: string) {
 
 <template>
   <div class="flex h-full flex-col bg-app">
-    <header class="flex h-12 shrink-0 items-center gap-3 border-b border-line px-3">
-      <UiButton variant="ghost" size="sm" @click="router.back()"><ArrowLeft class="size-4" />Back</UiButton>
-      <h1 class="text-sm font-semibold">Settings</h1>
-    </header>
+    <Teleport defer to="#titlebar-left"><UiButton variant="ghost" size="sm" @click="router.back()"><ArrowLeft class="size-4" />Back</UiButton></Teleport>
+    <Teleport defer to="#titlebar-center"><h1 class="pointer-events-none text-xs font-semibold">Settings</h1></Teleport>
     <main class="min-h-0 flex-1 overflow-y-auto">
       <div class="mx-auto max-w-[720px] space-y-8 px-8 py-8">
         <section>
@@ -152,7 +150,7 @@ async function saveKey(next: string) {
               <p class="mb-2 text-2xs text-muted">Local models run privately with Whisper. Larger models are more accurate but slower.</p>
               <ul class="divide-y divide-line rounded-md border border-line">
                 <li v-for="model in models" :key="model.id" class="flex items-center gap-3 px-3 py-2">
-                  <input type="radio" name="whisper-model" class="accent-[#4cc9f0]" :checked="settings.value.whisperModel === model.id" :disabled="!model.installed" :aria-label="model.label" @change="settings.update({ whisperModel: model.id })">
+                  <input type="radio" name="whisper-model" class="accent-[#6b97e8]" :checked="settings.value.whisperModel === model.id" :disabled="!model.installed" :aria-label="model.label" @change="settings.update({ whisperModel: model.id })">
                   <span class="min-w-0 flex-1">
                     <span class="block text-xs">{{ model.label }}</span>
                     <span class="block text-2xs text-faint">{{ formatBytes(model.size) }}</span>

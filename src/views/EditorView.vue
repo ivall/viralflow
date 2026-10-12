@@ -204,30 +204,31 @@ onBeforeRouteLeave(async () => {
 
 <template>
   <div class="flex h-full flex-col bg-app">
-    <header class="flex h-11 shrink-0 items-center gap-2 border-b border-line bg-panel px-2">
+    <Teleport defer to="#titlebar-left">
       <UiButton variant="ghost" size="sm" @click="router.push({ name: 'home' })"><ArrowLeft class="size-4" />Projects</UiButton>
-      <span class="h-4 w-px bg-line" />
-      <template v-if="editor.project">
+    </Teleport>
+    <Teleport v-if="editor.project" defer to="#titlebar-center">
+      <div class="flex min-w-0 items-center gap-2">
         <input
           v-if="editingName" v-model="nameDraft" data-project-name maxlength="120"
-          class="h-7 w-72 rounded-md border border-accent bg-app px-2 text-xs font-medium outline-none"
+          class="h-7 w-72 rounded-lg border border-accent bg-raised px-2.5 text-center text-xs font-medium outline-none"
           @blur="finishRename(true)" @keydown.enter.prevent="finishRename(true)" @keydown.esc.prevent="finishRename(false)"
         >
-        <button v-else class="max-w-[360px] truncate rounded px-2 py-1 text-xs font-medium hover:bg-hover" title="Rename project" @click="startRename">{{ editor.project.name }}</button>
-        <span class="flex items-center gap-1 text-2xs" :class="editor.saveState === 'error' ? 'text-danger' : 'text-faint'" aria-live="polite">
+        <button v-else class="max-w-[420px] truncate rounded-md px-2 py-1 text-xs font-semibold hover:bg-hover" title="Rename project" @click="startRename">{{ editor.project.name }}</button>
+        <span class="pointer-events-none flex items-center gap-1 text-2xs" :class="editor.saveState === 'error' ? 'text-danger' : 'text-faint'" aria-live="polite">
           <LoaderCircle v-if="editor.saveState === 'saving'" class="size-3 animate-spin" />
           <CloudAlert v-else-if="editor.saveState === 'error'" class="size-3" />
           <Check v-else-if="editor.saveState === 'saved'" class="size-3" />
           {{ saveLabel }}
         </span>
-      </template>
-      <div class="ml-auto flex items-center gap-1.5">
-        <UiMenu :items="moreItems" @select="onMore">
-          <UiButton variant="ghost" size="sm" icon aria-label="More"><MoreHorizontal class="size-4" /></UiButton>
-        </UiMenu>
-        <UiButton variant="primary" size="sm" :disabled="!editor.project" @click="showExport = true"><Download class="size-3.5" />Export</UiButton>
       </div>
-    </header>
+    </Teleport>
+    <Teleport defer to="#titlebar-right">
+      <UiMenu :items="moreItems" @select="onMore">
+        <UiButton variant="ghost" size="sm" icon aria-label="More"><MoreHorizontal class="size-4" /></UiButton>
+      </UiMenu>
+      <UiButton variant="primary" size="sm" :disabled="!editor.project" @click="showExport = true"><Download class="size-3.5" />Export</UiButton>
+    </Teleport>
 
     <div v-if="loading" class="grid flex-1 place-items-center text-xs text-muted"><LoaderCircle class="size-5 animate-spin" /></div>
     <div v-else-if="loadError" class="grid flex-1 place-items-center">
@@ -238,12 +239,12 @@ onBeforeRouteLeave(async () => {
       </div>
     </div>
     <template v-else-if="editor.project">
-      <div class="flex min-h-0 flex-1">
+      <div class="flex min-h-0 flex-1 gap-2 px-2 pt-0.5">
         <AssetPanel v-model="panel" :caption-source="captionSource" @edit-text="focusText" />
         <Player @edit-text="focusText" />
         <Inspector ref="inspector" @captions="openCaptions" />
       </div>
-      <TimelineView ref="timeline" :height="timelineHeight" @open-panel="value => panel = value" @resize="value => timelineHeight = value" />
+      <TimelineView ref="timeline" class="m-2" :height="timelineHeight" @open-panel="value => panel = value" @resize="value => timelineHeight = value" />
     </template>
 
     <div v-if="drag.active" class="pointer-events-none fixed z-[400] rounded-md border border-accent bg-panel/95 px-2.5 py-1.5 text-2xs text-fg shadow-xl" :style="{ left: `${drag.x + 14}px`, top: `${drag.y + 10}px` }">{{ drag.label }}</div>

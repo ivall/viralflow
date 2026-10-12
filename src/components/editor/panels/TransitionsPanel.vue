@@ -1,15 +1,13 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import UiButton from '@/components/ui/UiButton.vue'
-import UiSlider from '@/components/ui/UiSlider.vue'
 import { beginDrag } from '@/lib/dnd'
-import { DEFAULT_TRANSITION, MAX_TRANSITION, MIN_TRANSITION, TRANSITIONS, trackSeams } from '@/lib/engine/transitions'
+import { TRANSITIONS, trackSeams } from '@/lib/engine/transitions'
 import type { TransitionKind } from '@/lib/types'
 import { useEditor } from '@/stores/editor'
 import { useToasts } from '@/stores/toast'
 
 const editor = useEditor()
-const duration = ref(DEFAULT_TRANSITION)
 const seam = computed(() => {
   const item = editor.selectedItem
   const track = editor.selectedTrack
@@ -39,13 +37,13 @@ function apply(kind: TransitionKind) {
     useToasts().show('Select a clip that touches another clip', { detail: 'Or drag a transition onto the cut between two clips.' })
     return
   }
-  editor.setTransition(seam.value.to.id, kind, duration.value)
+  editor.setTransition(seam.value.to.id, kind)
 }
 
-function applyAll(kind: TransitionKind) {
+function applyAll() {
   const track = editor.selectedTrack
-  if (!track) return
-  editor.setTransitionForTrack(track.id, kind, duration.value)
+  if (!track || !seam.value || seam.value.kind === 'none') return
+  editor.setTransitionForTrack(track.id, seam.value.kind, seam.value.duration)
 }
 
 function onPointer(event: PointerEvent, kind: TransitionKind, label: string) {
@@ -55,7 +53,6 @@ function onPointer(event: PointerEvent, kind: TransitionKind, label: string) {
 
 <template>
   <div class="h-full overflow-y-auto p-3">
-    <p class="mb-3 text-2xs leading-4 text-muted">Drag a transition onto a cut between two clips, or select a clip and click.</p>
     <div class="grid grid-cols-3 gap-2">
       <button
         v-for="preset in TRANSITIONS" :key="preset.kind"
@@ -64,14 +61,16 @@ function onPointer(event: PointerEvent, kind: TransitionKind, label: string) {
         @pointerdown="onPointer($event, preset.kind, preset.label)"
       >
         <span class="block aspect-video w-full rounded border-2" :class="seam?.kind === preset.kind ? 'border-accent' : 'border-transparent'" :style="{ background: glyphs[preset.kind] }" />
-        <span class="truncate text-[10px] text-muted group-hover:text-fg">{{ preset.label }}</span>
+        <span class="truncate text-[11px] text-muted group-hover:text-fg">{{ preset.label }}</span>
       </button>
     </div>
     <div class="mt-4 space-y-2 border-t border-line pt-3">
-      <UiSlider v-model="duration" label="Duration" :display="`${duration.toFixed(1)}s`" :min="MIN_TRANSITION" :max="MAX_TRANSITION" :step="0.1" />
+      <p v-if="seam && seam.kind !== 'none'" class="text-2xs text-muted">
+        <span class="text-fg">{{ TRANSITIONS.find(preset => preset.kind === seam!.kind)?.label }}</span> · {{ seam.duration.toFixed(1) }}s
+      </p>
       <div class="flex gap-2">
         <UiButton variant="outline" size="sm" class="flex-1" :disabled="!seam || seam.kind === 'none'" @click="apply('none')">Remove</UiButton>
-        <UiButton variant="outline" size="sm" class="flex-1" :disabled="!editor.selectedTrack || !seam || seam.kind === 'none'" @click="applyAll(seam!.kind)">Apply to all cuts</UiButton>
+        <UiButton variant="outline" size="sm" class="flex-1" :disabled="!editor.selectedTrack || !seam || seam.kind === 'none'" @click="applyAll">Apply to all cuts</UiButton>
       </div>
     </div>
   </div>

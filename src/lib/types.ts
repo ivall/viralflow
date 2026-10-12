@@ -84,7 +84,16 @@ export interface TextStyle {
   shadowOpacity: number
   shadowBlur: number
   shadowDistance: number
+  /** How the highlighted word stands out: its own color, or a box behind it. */
+  highlightMode: HighlightMode
+  highlightColor: string
+  /** Text color of the highlighted word in box mode ('' keeps the normal color). */
+  highlightTextColor: string
+  /** Index of the highlighted word (whitespace separated); -1 for none. */
+  highlightIndex: number
 }
+
+export type HighlightMode = 'none' | 'color' | 'box'
 
 export interface ShapeStyle {
   kind: ShapeKind
@@ -95,6 +104,11 @@ export interface ShapeStyle {
   color: string
   /** Blur strength for blur regions, in project pixels. */
   blur: number
+}
+
+export interface EffectRange {
+  start: number
+  duration: number
 }
 
 export interface TimelineItem {
@@ -130,6 +144,8 @@ export interface TimelineItem {
   blend?: BlendMode
   adjust?: Adjust
   effect?: EffectKind
+  /** Part of the clip the effect covers, relative to the clip start. Whole clip when absent. */
+  effectRange?: EffectRange
   animIn?: Animation<AnimationInKind>
   animOut?: Animation<AnimationOutKind>
   /** Transition into this clip from the clip that ends exactly where it starts. */
@@ -215,4 +231,8 @@ export interface CaptionCue {
   text: string
   start: number
   duration: number
+  /** Word lit up while this cue shows (word-by-word highlight captions). */
+  highlightIndex?: number
+  /** Same caption as the previous cue, only the highlight moved on. */
+  continued?: boolean
 }

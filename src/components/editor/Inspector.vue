@@ -45,24 +45,26 @@ defineExpose({ focusText })
 </script>
 
 <template>
-  <aside class="flex w-[300px] shrink-0 flex-col border-l border-line bg-panel">
+  <aside class="surface flex w-[336px] shrink-0 flex-col overflow-hidden">
     <template v-if="item">
-      <header class="flex h-11 shrink-0 items-center gap-2 border-b border-line px-4">
-        <span class="grid size-6 place-items-center rounded" :style="{ background: `color-mix(in srgb, ${TRACK_COLORS[item.kind]} 25%, transparent)`, color: TRACK_COLORS[item.kind] }">
+      <header class="flex h-12 shrink-0 items-center gap-2.5 px-4">
+        <span class="grid size-7 place-items-center rounded-lg" :style="{ background: `color-mix(in srgb, ${TRACK_COLORS[item.kind]} 25%, transparent)`, color: TRACK_COLORS[item.kind] }">
           <component :is="icon" class="size-3.5" />
         </span>
-        <span class="min-w-0 flex-1 truncate text-xs font-medium">{{ editor.selectedIds.length > 1 ? `${editor.selectedIds.length} clips selected` : item.name }}</span>
+        <span class="min-w-0 flex-1 truncate text-sm font-semibold">{{ editor.selectedIds.length > 1 ? `${editor.selectedIds.length} clips selected` : item.name }}</span>
       </header>
-      <nav class="flex h-9 shrink-0 gap-3 border-b border-line px-4" role="tablist">
-        <button
-          v-for="entry in tabs" :key="entry.id" role="tab" :aria-selected="tab === entry.id"
-          class="relative text-xs transition-colors"
-          :class="tab === entry.id ? 'text-fg' : 'text-muted hover:text-fg'"
-          @click="tab = entry.id"
-        >
-          {{ entry.label }}<span v-if="tab === entry.id" class="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-accent" />
-        </button>
-      </nav>
+      <div class="shrink-0 border-b border-line px-3 pb-3">
+        <nav class="flex rounded-lg border border-line bg-app p-0.5" role="tablist">
+          <button
+            v-for="entry in tabs" :key="entry.id" role="tab" :aria-selected="tab === entry.id"
+            class="h-7 min-w-0 flex-1 truncate rounded-md px-1 text-2xs font-medium transition-colors"
+            :class="tab === entry.id ? 'bg-raised text-fg shadow-sm ring-1 ring-white/5' : 'text-muted hover:text-fg'"
+            @click="tab = entry.id"
+          >
+            {{ entry.label }}
+          </button>
+        </nav>
+      </div>
       <div class="min-h-0 flex-1 overflow-y-auto">
         <template v-if="tab === 'main'">
           <TextSection v-if="item.kind === 'text'" ref="textSection" :item="item" />
@@ -81,7 +83,7 @@ defineExpose({ focusText })
       </div>
     </template>
     <template v-else-if="editor.project">
-      <header class="flex h-11 shrink-0 items-center border-b border-line px-4 text-xs font-medium">Project settings</header>
+      <header class="flex h-12 shrink-0 items-center border-b border-line px-4 text-sm font-semibold">Project settings</header>
       <div class="min-h-0 flex-1 overflow-y-auto"><ProjectSection /></div>
     </template>
   </aside>

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {
   ArrowLeftToLine, ArrowRightToLine, AudioLines, Copy, Diamond, Eye, EyeOff, Film, Group, Lock, Magnet, Maximize2, MoreHorizontal, Pencil,
-  Plus, Redo2, Scissors, Shapes, SquareSplitHorizontal, Trash2, Type, Undo2, Ungroup, Unlock, Volume2, VolumeX, ZoomIn, ZoomOut, Image as ImageIcon, Blend
+  Plus, Redo2, Scissors, Shapes, SquareSplitHorizontal, Trash2, Type, Undo2, Ungroup, Unlock, Volume2, VolumeX, ZoomIn, ZoomOut, Image as ImageIcon, Blend, Sparkles, X, GripVertical
 } from '@lucide/vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import UiContextMenu from '@/components/ui/UiContextMenu.vue'
@@ -12,7 +12,8 @@ import type { MenuItem } from '@/components/ui/menu'
 import { drag, dragDuration, dragKind, registerDropTarget, type DragPayload } from '@/lib/dnd'
 import { clamp } from '@/lib/engine/math'
 import { sortedKeyframes } from '@/lib/engine/keyframes'
-import { TRANSITIONS, trackSeams, type Seam } from '@/lib/engine/transitions'
+import { MAX_TRANSITION, MIN_TRANSITION, TRANSITIONS, trackSeams, type Seam } from '@/lib/engine/transitions'
+import { EFFECTS, effectWindow, MIN_EFFECT } from '@/lib/engine/effects'
 import { trackKindFor, TRACK_COLORS } from '@/lib/project'
 import type { TimelineItem, Track, TrackKind } from '@/lib/types'
 import { fileUrl } from '@/services/ipc'
@@ -25,9 +26,9 @@ const props = defineProps<{ height: number }>()
 const emit = defineEmits<{ openPanel: [panel: string]; resize: [height: number] }>()
 const editor = useEditor()
 
-const HEADER_W = 184
+const HEADER_W = 200
 const PAD = 16
-const RULER_H = 28
+const RULER_H = 30
 const GAP = 4
 const SNAP_PX = 8
 
@@ -38,7 +39,9 @@ const snapLine = ref<number | null>(null)
 const marquee = ref<{ x0: number; y0: number; x1: number; y1: number } | null>(null)
 const editingTrack = ref<string | null>(null)
 const trackDraft = ref('')
-const dropHint = ref<{ kind: 'track'; trackId: string; start: number; duration: number } | { kind: 'new'; top: number; start: number; duration: number } | { kind: 'seam'; seam: Seam } | null>(null)
+const dropHint = ref<{ kind: 'track'; trackId: string; start: number; duration: number } | { kind: 'new'; top: number; start: number; duration: number } | { kind: 'seam'; seam: Seam } | { kind: 'clip'; itemId: string } | null>(null)
+const resizingSeam = ref<string | null>(null)
+const trackDrag = ref<{ id: string; index: number } | null>(null)
 
 const tracks = computed(() => editor.tracks)
 const dropRow = computed(() => {
@@ -48,7 +51,7 @@ const dropRow = computed(() => {
 const zoom = computed(() => editor.zoom)
 
 function rowHeight(track: Track) {
-  return track.kind === 'video' ? 58 : track.kind === 'audio' ? 46 : 30
+  return track.kind === 'video' ? 72 : track.kind === 'audio' ? 54 : 38
 }
 
 const rows = computed(() => {
@@ -288,7 +291,7 @@ function startTrim(event: PointerEvent, item: TimelineItem, edge: 'start' | 'end
   event.stopPropagation()
   event.preventDefault()
   editor.select(item.id)
-  const origin = { start: item.start, duration: item.duration, sourceIn: item.sourceIn ?? 0 }
+  const origin = { start: item.start, duration: item.duration, sourceIn: item.sourceIn ?? 0, effectRange: item.effectRange && { ...item.effectRange } }
   const points = snapPoints(new Set([item.id]))
   const startX = event.clientX
   const startScroll = scroller.value!.scrollLeft
@@ -419,6 +422,141 @@ function openSeam(seam: Seam) {
   emit('openPanel', 'transitions')
 }
 
+function seamEditable(seam: Seam, track: Track) {
+  return !track.locked && !seam.to.locked
+}
+
+/** Dragging either edge stretches the transition symmetrically around the cut. */
+function startTransitionResize(event: PointerEvent, seam: Seam, edge: 'start' | 'end') {
+  if (event.button !== 0) return
+  event.stopPropagation()
+  event.preventDefault()
+  editor.select(seam.to.id)
+  const limit = Math.min(MAX_TRANSITION, seam.from.duration, seam.to.duration)
+  let moved = false
+  resizingSeam.value = seam.to.id
+  bindDrag(move => {
+    if (!moved) { moved = true; editor.beginChange() }
+    const time = timeAt(move.clientX)
+    const half = edge === 'end' ? time - seam.cut : seam.cut - time
+    const duration = clamp(Math.round(half * 2 * 20) / 20, MIN_TRANSITION, limit)
+    editor.setTransition(seam.to.id, seam.kind, duration, false)
+  }, cancelled => {
+    resizingSeam.value = null
+    if (cancelled && moved) editor.undo()
+  }, 'ew-resize')
+}
+
+// ---------------------------------------------------------------- effects on clips
+
+function effectLabel(item: TimelineItem) {
+  return EFFECTS.find(effect => effect.kind === item.effect)?.label ?? 'Effect'
+}
+
+function hasEffect(item: TimelineItem) {
+  return Boolean(item.effect && item.effect !== 'none' && item.kind !== 'audio' && item.kind !== 'shape')
+}
+
+function acceptsEffect(item: TimelineItem, track: Track) {
+  return (item.kind === 'video' || item.kind === 'image' || item.kind === 'text') && !item.locked && !track.locked
+}
+
+/** Moves the effect inside its clip, or stretches one of its edges. */
+function startEffect(event: PointerEvent, item: TimelineItem, track: Track, mode: 'move' | 'start' | 'end') {
+  if (event.button !== 0) return
+  event.stopPropagation()
+  event.preventDefault()
+  editor.select(item.id)
+  if (item.locked || track.locked) {
+    emit('openPanel', 'effects')
+    return
+  }
+  const origin = effectWindow(item)
+  const points = snapPoints(new Set()).filter(point => point >= item.start - 1e-6 && point <= item.start + item.duration + 1e-6)
+  const startX = event.clientX
+  let moved = false
+  bindDrag(move => {
+    if (!moved) {
+      if (Math.abs(move.clientX - startX) < 3) return
+      moved = true
+      editor.beginChange()
+    }
+    const dt = (move.clientX - startX) / zoom.value
+    const end = origin.start + origin.duration
+    let start = origin.start
+    let duration = origin.duration
+    if (mode === 'move') {
+      start = clamp(origin.start + dt, 0, item.duration - origin.duration)
+      const head = snap(item.start + start, points, move.shiftKey)
+      const tail = snap(item.start + start + duration, points, move.shiftKey)
+      if (head.line !== null) { start = head.value - item.start; snapLine.value = head.line }
+      else if (tail.line !== null) { start = tail.value - item.start - duration; snapLine.value = tail.line }
+      else snapLine.value = null
+      start = clamp(start, 0, item.duration - duration)
+    } else if (mode === 'start') {
+      const result = snap(item.start + clamp(origin.start + dt, 0, end - MIN_EFFECT), points, move.shiftKey)
+      snapLine.value = result.line
+      start = clamp(result.value - item.start, 0, end - MIN_EFFECT)
+      duration = end - start
+    } else {
+      const result = snap(item.start + clamp(end + dt, origin.start + MIN_EFFECT, item.duration), points, move.shiftKey)
+      snapLine.value = result.line
+      duration = clamp(result.value - item.start, origin.start + MIN_EFFECT, item.duration) - origin.start
+    }
+    editor.setEffectRange(item.id, { start, duration })
+  }, cancelled => {
+    if (cancelled && moved) editor.undo()
+    if (!moved) emit('openPanel', 'effects')
+  }, mode === 'move' ? 'grabbing' : 'ew-resize')
+}
+
+function removeEffect(item: TimelineItem) {
+  editor.setEffect([item.id], 'none')
+}
+
+// ---------------------------------------------------------------- reordering tracks
+
+function startTrackDrag(event: PointerEvent, track: Track) {
+  if (event.button !== 0 || editingTrack.value === track.id) return
+  const target = event.target as HTMLElement
+  if (target.closest('input') || target.closest('button:not([data-track-grab])')) return
+  const startY = event.clientY
+  let moved = false
+  let lastY = startY
+  const update = () => {
+    const column = headerColumn.value
+    if (!column) return
+    const y = lastY - column.getBoundingClientRect().top + column.scrollTop
+    const index = rows.value.findIndex(row => y < row.top + row.height / 2)
+    trackDrag.value = { id: track.id, index: index < 0 ? rows.value.length : index }
+  }
+  bindDrag(move => {
+    if (!moved && Math.abs(move.clientY - startY) < 4) return
+    moved = true
+    lastY = move.clientY
+    const rect = scroller.value?.getBoundingClientRect()
+    if (rect) autoScroll(rect.left + rect.width / 2, move.clientY, update)
+    update()
+  }, cancelled => {
+    const state = trackDrag.value
+    trackDrag.value = null
+    if (cancelled || !moved || !state) return
+    const from = tracks.value.findIndex(candidate => candidate.id === track.id)
+    const to = state.index > from ? state.index - 1 : state.index
+    if (from >= 0 && to !== from) editor.moveTrack(track.id, to)
+  }, 'grabbing')
+}
+
+const trackDropLine = computed(() => {
+  const state = trackDrag.value
+  if (!state) return null
+  const from = tracks.value.findIndex(track => track.id === state.id)
+  if (state.index === from || state.index === from + 1) return null
+  const row = rows.value[state.index]
+  const last = rows.value.at(-1)
+  return row ? row.top - GAP / 2 : last ? last.top + last.height + GAP / 2 : 8
+})
+
 // ---------------------------------------------------------------- drop from panels and the OS
 
 function computeDrop(payload: DragPayload, clientX: number, clientY: number) {
@@ -430,7 +568,13 @@ function computeDrop(payload: DragPayload, clientX: number, clientY: number) {
     if (!row) return null
     const time = timeAt(clientX)
     const seam = trackSeams(row.track, editor.fps).find(candidate => Math.abs(candidate.cut - time) * zoom.value < 40)
-    return seam ? { kind: 'seam' as const, seam } : null
+    return seam && seamEditable(seam, row.track) ? { kind: 'seam' as const, seam } : null
+  }
+  if (payload.type === 'effect') {
+    if (!row || y < row.top || y > row.top + row.height) return null
+    const time = timeAt(clientX)
+    const item = row.track.items.find(candidate => time >= candidate.start && time < candidate.start + candidate.duration && acceptsEffect(candidate, row.track))
+    return item ? { kind: 'clip' as const, itemId: item.id } : null
   }
   const kind = payload.type === 'files' ? 'video' : dragKind(payload)
   if (!kind) return null
@@ -460,7 +604,17 @@ async function handleDrop(payload: DragPayload, clientX: number, clientY: number
   dropHint.value = null
   if (!result) return false
   if (result.kind === 'seam') {
-    if (payload.type === 'transition') editor.setTransition(result.seam.to.id, payload.kind)
+    if (payload.type === 'transition') {
+      editor.setTransition(result.seam.to.id, payload.kind)
+      editor.select(result.seam.to.id)
+    }
+    return true
+  }
+  if (result.kind === 'clip') {
+    if (payload.type === 'effect') {
+      editor.setEffect([result.itemId], payload.kind)
+      editor.select(result.itemId)
+    }
     return true
   }
   const placement = result.kind === 'track' ? { trackId: result.trackId, start: result.start } : { newTrackIndex: result.index, start: result.start }
@@ -616,28 +770,28 @@ defineExpose({ zoomToFit, setZoom })
 </script>
 
 <template>
-  <section class="relative flex shrink-0 flex-col border-t border-line bg-panel" :style="{ height: `${height}px` }">
-    <div class="absolute inset-x-0 -top-1 z-30 h-2 cursor-row-resize" @pointerdown="startResize" />
+  <section class="surface relative flex shrink-0 flex-col" :style="{ height: `${height}px` }">
+    <div class="absolute inset-x-0 -top-2 z-30 h-2 cursor-row-resize" @pointerdown="startResize" />
 
-    <div class="flex h-10 shrink-0 items-center gap-0.5 border-b border-line px-2">
-      <UiIconButton label="Undo" shortcut="Ctrl+Z" size="sm" :disabled="!editor.canUndo" @click="editor.undo()"><Undo2 class="size-4" /></UiIconButton>
-      <UiIconButton label="Redo" shortcut="Ctrl+Shift+Z" size="sm" :disabled="!editor.canRedo" @click="editor.redo()"><Redo2 class="size-4" /></UiIconButton>
-      <span class="mx-1.5 h-4 w-px bg-line" />
-      <UiIconButton label="Split" shortcut="S" size="sm" @click="editor.splitAt()"><Scissors class="size-4" /></UiIconButton>
-      <UiIconButton label="Trim start to playhead" shortcut="Q" size="sm" :disabled="!editor.selectedItem" @click="editor.trimToPlayhead('start')"><ArrowLeftToLine class="size-4" /></UiIconButton>
-      <UiIconButton label="Trim end to playhead" shortcut="W" size="sm" :disabled="!editor.selectedItem" @click="editor.trimToPlayhead('end')"><ArrowRightToLine class="size-4" /></UiIconButton>
-      <UiIconButton label="Duplicate" shortcut="Ctrl+D" size="sm" :disabled="!editor.selectedIds.length" @click="editor.duplicateSelected()"><Copy class="size-4" /></UiIconButton>
-      <UiIconButton label="Delete" shortcut="Del" size="sm" :disabled="!editor.selectedIds.length" @click="editor.deleteSelected()"><Trash2 class="size-4" /></UiIconButton>
-      <span class="mx-1.5 h-4 w-px bg-line" />
-      <UiIconButton label="Add or remove keyframe" shortcut="K" size="sm" :disabled="!editor.selectedItem || editor.selectedItem.kind === 'audio'" @click="editor.toggleKeyframeAtPlayhead()"><Diamond class="size-4" /></UiIconButton>
-      <UiIconButton label="Transitions" size="sm" @click="emit('openPanel', 'transitions')"><Blend class="size-4" /></UiIconButton>
+    <div class="flex h-12 shrink-0 items-center gap-0.5 border-b border-line px-2.5">
+      <UiIconButton label="Undo" shortcut="Ctrl+Z" :disabled="!editor.canUndo" @click="editor.undo()"><Undo2 class="size-4" /></UiIconButton>
+      <UiIconButton label="Redo" shortcut="Ctrl+Shift+Z" :disabled="!editor.canRedo" @click="editor.redo()"><Redo2 class="size-4" /></UiIconButton>
+      <span class="mx-2 h-5 w-px bg-line" />
+      <UiIconButton label="Split" shortcut="S" @click="editor.splitAt()"><Scissors class="size-4" /></UiIconButton>
+      <UiIconButton label="Trim start to playhead" shortcut="Q" :disabled="!editor.selectedItem" @click="editor.trimToPlayhead('start')"><ArrowLeftToLine class="size-4" /></UiIconButton>
+      <UiIconButton label="Trim end to playhead" shortcut="W" :disabled="!editor.selectedItem" @click="editor.trimToPlayhead('end')"><ArrowRightToLine class="size-4" /></UiIconButton>
+      <UiIconButton label="Duplicate" shortcut="Ctrl+D" :disabled="!editor.selectedIds.length" @click="editor.duplicateSelected()"><Copy class="size-4" /></UiIconButton>
+      <UiIconButton label="Delete" shortcut="Del" :disabled="!editor.selectedIds.length" @click="editor.deleteSelected()"><Trash2 class="size-4" /></UiIconButton>
+      <span class="mx-2 h-5 w-px bg-line" />
+      <UiIconButton label="Add or remove keyframe" shortcut="K" :disabled="!editor.selectedItem || editor.selectedItem.kind === 'audio'" @click="editor.toggleKeyframeAtPlayhead()"><Diamond class="size-4" /></UiIconButton>
+      <UiIconButton label="Transitions" @click="emit('openPanel', 'transitions')"><Blend class="size-4" /></UiIconButton>
       <div class="ml-auto flex items-center gap-1">
-        <UiIconButton :label="editor.snapping ? 'Snapping on' : 'Snapping off'" size="sm" :active="editor.snapping" @click="editor.snapping = !editor.snapping"><Magnet class="size-4" :class="editor.snapping && 'text-accent'" /></UiIconButton>
-        <span class="mx-1.5 h-4 w-px bg-line" />
-        <UiIconButton label="Zoom out" shortcut="-" size="sm" @click="setZoom(zoom / 1.4)"><ZoomOut class="size-4" /></UiIconButton>
+        <UiIconButton :label="editor.snapping ? 'Snapping on' : 'Snapping off'" :active="editor.snapping" @click="editor.snapping = !editor.snapping"><Magnet class="size-4" :class="editor.snapping && 'text-accent'" /></UiIconButton>
+        <span class="mx-2 h-5 w-px bg-line" />
+        <UiIconButton label="Zoom out" shortcut="-" @click="setZoom(zoom / 1.4)"><ZoomOut class="size-4" /></UiIconButton>
         <UiSlider v-model="zoomSlider" class="w-28" :min="Math.log(2)" :max="Math.log(600)" :step="0.01" />
-        <UiIconButton label="Zoom in" shortcut="=" size="sm" @click="setZoom(zoom * 1.4)"><ZoomIn class="size-4" /></UiIconButton>
-        <UiIconButton label="Fit timeline" shortcut="Shift+Z" size="sm" @click="zoomToFit"><Maximize2 class="size-4" /></UiIconButton>
+        <UiIconButton label="Zoom in" shortcut="=" @click="setZoom(zoom * 1.4)"><ZoomIn class="size-4" /></UiIconButton>
+        <UiIconButton label="Fit timeline" shortcut="Shift+Z" @click="zoomToFit"><Maximize2 class="size-4" /></UiIconButton>
       </div>
     </div>
 
@@ -646,31 +800,37 @@ defineExpose({ zoomToFit, setZoom })
       <div class="flex shrink-0 flex-col border-r border-line" :style="{ width: `${HEADER_W}px` }">
         <div class="flex shrink-0 items-center border-b border-line px-2" :style="{ height: `${RULER_H}px` }">
           <UiMenu :items="addTrackItems" align="start" @select="kind => editor.addTrack(kind as TrackKind)">
-            <button class="flex h-6 items-center gap-1 rounded px-1.5 text-2xs text-muted hover:bg-hover hover:text-fg"><Plus class="size-3.5" />Add track</button>
+            <button class="flex h-7 items-center gap-1.5 rounded-lg px-2 text-xs font-medium text-muted hover:bg-hover hover:text-fg"><Plus class="size-4" />Add track</button>
           </UiMenu>
         </div>
         <div ref="headerColumn" class="relative min-h-0 flex-1 overflow-hidden">
           <div class="relative" :style="{ height: `${rowsHeight}px` }">
             <div
               v-for="row in rows" :key="row.track.id"
-              class="group absolute inset-x-0 flex items-center gap-1.5 px-2"
+              class="group absolute inset-x-0 flex cursor-grab items-center gap-1.5 rounded-sm px-2 transition-colors"
               :style="{ top: `${row.top}px`, height: `${row.height}px` }"
-              :class="row.track.hidden && 'opacity-50'"
+              :class="[row.track.hidden && 'opacity-50', trackDrag?.id === row.track.id ? 'bg-hover opacity-60' : 'hover:bg-hover/40']"
+              title="Drag to reorder"
+              @pointerdown="startTrackDrag($event, row.track)"
             >
-              <component :is="trackIcons[row.track.kind]" class="size-3.5 shrink-0 text-faint" />
+              <span class="relative size-4 shrink-0">
+                <component :is="trackIcons[row.track.kind]" class="absolute inset-0 size-4 text-muted transition-opacity group-hover:opacity-0" />
+                <GripVertical class="absolute inset-0 size-4 text-muted opacity-0 transition-opacity group-hover:opacity-100" />
+              </span>
               <input
                 v-if="editingTrack === row.track.id" v-model="trackDraft" :data-track-input="row.track.id"
-                class="h-6 min-w-0 flex-1 rounded border border-accent bg-app px-1.5 text-2xs text-fg outline-none"
+                class="h-7 min-w-0 flex-1 rounded-md border border-accent bg-raised px-1.5 text-xs text-fg outline-none"
                 @blur="finishRename(row.track, true)" @keydown.enter.prevent="finishRename(row.track, true)" @keydown.esc.prevent="finishRename(row.track, false)"
               >
-              <button v-else class="min-w-0 flex-1 truncate text-left text-2xs text-muted hover:text-fg" @dblclick="startRename(row.track)">{{ row.track.name }}</button>
-              <button v-if="row.track.kind !== 'audio'" class="grid size-5 place-items-center rounded text-faint hover:bg-hover hover:text-fg" :aria-label="row.track.hidden ? 'Show track' : 'Hide track'" :title="row.track.hidden ? 'Show track' : 'Hide track'" @click="editor.updateTrack(row.track.id, { hidden: !row.track.hidden })"><EyeOff v-if="row.track.hidden" class="size-3.5 text-warn" /><Eye v-else class="size-3.5" /></button>
-              <button v-if="row.track.kind !== 'text'" class="grid size-5 place-items-center rounded text-faint hover:bg-hover hover:text-fg" :aria-label="row.track.muted ? 'Unmute track' : 'Mute track'" :title="row.track.muted ? 'Unmute track' : 'Mute track'" @click="editor.updateTrack(row.track.id, { muted: !row.track.muted })"><VolumeX v-if="row.track.muted" class="size-3.5 text-warn" /><Volume2 v-else class="size-3.5" /></button>
-              <button class="grid size-5 place-items-center rounded text-faint hover:bg-hover hover:text-fg" :aria-label="row.track.locked ? 'Unlock track' : 'Lock track'" :title="row.track.locked ? 'Unlock track' : 'Lock track'" @click="editor.updateTrack(row.track.id, { locked: !row.track.locked })"><Lock v-if="row.track.locked" class="size-3.5 text-warn" /><Unlock v-else class="size-3.5" /></button>
+              <button v-else data-track-grab class="min-w-0 flex-1 cursor-grab truncate text-left text-xs text-muted hover:text-fg" @dblclick="startRename(row.track)">{{ row.track.name }}</button>
+              <button v-if="row.track.kind !== 'audio'" class="grid size-6 place-items-center rounded-md text-faint hover:bg-hover hover:text-fg" :aria-label="row.track.hidden ? 'Show track' : 'Hide track'" :title="row.track.hidden ? 'Show track' : 'Hide track'" @click="editor.updateTrack(row.track.id, { hidden: !row.track.hidden })"><EyeOff v-if="row.track.hidden" class="size-3.5 text-warn" /><Eye v-else class="size-3.5" /></button>
+              <button v-if="row.track.kind !== 'text'" class="grid size-6 place-items-center rounded-md text-faint hover:bg-hover hover:text-fg" :aria-label="row.track.muted ? 'Unmute track' : 'Mute track'" :title="row.track.muted ? 'Unmute track' : 'Mute track'" @click="editor.updateTrack(row.track.id, { muted: !row.track.muted })"><VolumeX v-if="row.track.muted" class="size-3.5 text-warn" /><Volume2 v-else class="size-3.5" /></button>
+              <button class="grid size-6 place-items-center rounded-md text-faint hover:bg-hover hover:text-fg" :aria-label="row.track.locked ? 'Unlock track' : 'Lock track'" :title="row.track.locked ? 'Unlock track' : 'Lock track'" @click="editor.updateTrack(row.track.id, { locked: !row.track.locked })"><Lock v-if="row.track.locked" class="size-3.5 text-warn" /><Unlock v-else class="size-3.5" /></button>
               <UiMenu :items="trackMenu" align="start" @select="action => trackAction(row.track, action)">
                 <button class="grid size-5 place-items-center rounded text-faint opacity-0 hover:bg-hover hover:text-fg group-hover:opacity-100" aria-label="Track options"><MoreHorizontal class="size-3.5" /></button>
               </UiMenu>
             </div>
+            <div v-if="trackDropLine !== null" class="pointer-events-none absolute inset-x-1 z-10 h-0.5 -translate-y-1/2 rounded bg-accent" :style="{ top: `${trackDropLine}px` }" />
           </div>
         </div>
       </div>
@@ -682,65 +842,100 @@ defineExpose({ zoomToFit, setZoom })
             <div class="sticky top-0 z-20 cursor-ew-resize border-b border-line bg-panel" :style="{ height: `${RULER_H}px` }" @pointerdown="startScrub">
               <template v-for="tick in ruler.ticks" :key="tick.time">
                 <div class="absolute bottom-0 w-px" :class="tick.major ? 'h-2.5 bg-line-strong' : 'h-1.5 bg-line'" :style="{ left: `${x(tick.time)}px` }" />
-                <span v-if="tick.major" class="absolute top-1 pl-1 text-[10px] tabular-nums text-faint" :style="{ left: `${x(tick.time)}px` }">{{ rulerLabel(tick.time, ruler.major) }}</span>
+                <span v-if="tick.major" class="absolute top-1 pl-1 text-[11px] tabular-nums text-faint" :style="{ left: `${x(tick.time)}px` }">{{ rulerLabel(tick.time, ruler.major) }}</span>
               </template>
             </div>
 
             <div class="absolute inset-x-0 bottom-0" :style="{ top: `${RULER_H}px` }" @pointerdown.self="startArea">
-              <div v-for="row in rows" :key="row.track.id" class="group absolute inset-x-0 rounded-sm" :class="[row.track.locked && 'bg-[repeating-linear-gradient(135deg,transparent_0_6px,rgba(255,255,255,0.025)_6px_12px)]', dropHint?.kind === 'track' && dropHint.trackId === row.track.id ? 'bg-accent/[.06]' : 'bg-app/40']" :style="{ top: `${row.top}px`, height: `${row.height}px` }" @pointerdown.self="startArea">
+              <div v-for="row in rows" :key="row.track.id" class="group absolute inset-x-0 rounded-sm" :class="[row.track.locked && 'bg-[repeating-linear-gradient(135deg,transparent_0_6px,rgba(255,255,255,0.025)_6px_12px)]', dropHint?.kind === 'track' && dropHint.trackId === row.track.id ? 'bg-accent/[.06]' : 'bg-app/40', trackDrag?.id === row.track.id && 'opacity-50']" :style="{ top: `${row.top}px`, height: `${row.height}px` }" @pointerdown.self="startArea">
                 <div
                   v-for="item in visibleItems(row.track)" :key="item.id"
                   :data-item-id="item.id"
-                  class="group/clip absolute top-0 h-full overflow-hidden rounded-[5px] border"
+                  class="group/clip absolute top-0 h-full overflow-hidden rounded-md border"
                   :class="[
-                    editor.selectedIds.includes(item.id) ? 'z-10 border-white shadow-[0_0_0_1px_rgba(255,255,255,0.6)]' : 'border-transparent hover:border-white/30',
+                    dropHint?.kind === 'clip' && dropHint.itemId === item.id ? 'z-10 border-[#c084fc] shadow-[0_0_0_2px_rgba(192,132,252,0.55)]' : editor.selectedIds.includes(item.id) ? 'z-10 border-white shadow-[0_0_0_1px_rgba(255,255,255,0.6)]' : 'border-transparent hover:border-white/30',
                     (item.locked || row.track.locked) ? 'cursor-not-allowed' : 'cursor-grab',
                     item.hidden && 'opacity-40'
                   ]"
-                  :style="{ left: `${x(item.start)}px`, width: `${Math.max(2, item.duration * zoom)}px`, background: `color-mix(in srgb, ${clipColor(item)} 28%, #17181c)` }"
+                  :style="{ left: `${x(item.start)}px`, width: `${Math.max(2, item.duration * zoom)}px`, background: `color-mix(in srgb, ${clipColor(item)} ${item.kind === 'video' || item.kind === 'image' ? 30 : 62}%, #17171b)` }"
                   @pointerdown="startClip($event, item, row.track)"
                 >
                   <ClipFilmstrip v-if="item.kind === 'video' && assetOf(item)" :asset="assetOf(item)!" :source-in="item.sourceIn ?? 0" :speed="item.speed || 1" :zoom="zoom" :height="row.height - 2" v-bind="visibleRange(item)" />
                   <div v-else-if="item.kind === 'image' && assetOf(item)" class="pointer-events-none absolute inset-0 bg-repeat-x opacity-90" :style="{ backgroundImage: `url(&quot;${fileUrl(assetOf(item)!.previewPath ?? assetOf(item)!.path)}&quot;)`, backgroundSize: 'auto 100%' }" />
                   <ClipWaveform v-else-if="item.kind === 'audio' && assetOf(item)" :asset="assetOf(item)!" :source-in="item.sourceIn ?? 0" :speed="item.speed || 1" :zoom="zoom" :volume="item.muted ? 0 : item.volume ?? 1" :color="'rgba(120,230,190,0.9)'" v-bind="visibleRange(item)" />
                   <div v-if="item.kind === 'video' || item.kind === 'image'" class="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/45 via-transparent to-transparent" />
-                  <div class="pointer-events-none relative flex h-4 items-center gap-1 px-1.5 pt-0.5 text-[10px] font-medium text-white/95">
-                    <component :is="clipIcon(item)" class="size-3 shrink-0 opacity-80" />
+                  <div class="pointer-events-none relative flex h-5 items-center gap-1.5 px-2 pt-0.5 text-xs font-medium text-white [text-shadow:0_1px_2px_rgba(0,0,0,0.6)]">
+                    <component :is="clipIcon(item)" class="size-3.5 shrink-0 opacity-90" />
                     <span class="truncate">{{ clipLabel(item) }}</span>
                     <span v-if="item.speed && item.speed !== 1" class="shrink-0 rounded bg-black/50 px-1 tabular-nums">{{ item.speed }}×</span>
                     <VolumeX v-if="item.muted" class="size-3 shrink-0 text-warn" />
                   </div>
-                  <div v-if="assetOf(item) === undefined && item.assetId" class="pointer-events-none absolute inset-x-1 bottom-1 truncate text-[10px] text-danger">Media missing</div>
+                  <div v-if="assetOf(item) === undefined && item.assetId" class="pointer-events-none absolute inset-x-1 bottom-1 truncate text-[11px] text-danger">Media missing</div>
                   <div v-if="(item.fadeIn ?? 0) > 0" class="pointer-events-none absolute left-0 top-0 h-full bg-gradient-to-r from-black/50 to-transparent" :style="{ width: `${(item.fadeIn ?? 0) * zoom}px` }" />
                   <div v-if="(item.fadeOut ?? 0) > 0" class="pointer-events-none absolute right-0 top-0 h-full bg-gradient-to-l from-black/50 to-transparent" :style="{ width: `${(item.fadeOut ?? 0) * zoom}px` }" />
                   <button
                     v-for="keyframe in keyframesOf(item)" :key="keyframe.id"
-                    class="absolute bottom-0.5 z-10 size-2 -translate-x-1/2 rotate-45 border border-black/60 cursor-ew-resize"
+                    class="absolute bottom-0.5 z-30 size-2 -translate-x-1/2 rotate-45 border border-black/60 cursor-ew-resize"
                     :class="Math.abs(editor.currentTime - item.start - keyframe.time) <= editor.keyframeTolerance ? 'bg-accent' : 'bg-white/85'"
                     :style="{ left: `${keyframe.time * zoom}px` }"
                     :aria-label="`Keyframe at ${keyframe.time.toFixed(2)}s`"
                     @pointerdown="startKeyframe($event, item, keyframe.id, keyframe.time)"
                   />
+                  <div
+                    v-if="hasEffect(item)"
+                    class="group/fx absolute bottom-0.5 z-20 flex h-4 cursor-grab items-center gap-1 overflow-hidden rounded border border-[#c084fc]/80 bg-[#7c3aed]/90 text-[11px] font-medium leading-none text-white shadow-sm"
+                    :style="{ left: `${effectWindow(item).start * zoom}px`, width: `${Math.max(4, effectWindow(item).duration * zoom)}px` }"
+                    :title="`${effectLabel(item)} · ${effectWindow(item).duration.toFixed(1)}s - drag to move, drag the edges to stretch`"
+                    @pointerdown="startEffect($event, item, row.track, 'move')"
+                  >
+                    <Sparkles class="ml-1.5 size-3 shrink-0" />
+                    <span class="min-w-0 flex-1 truncate">{{ effectLabel(item) }}</span>
+                    <button v-if="!item.locked && !row.track.locked && effectWindow(item).duration * zoom > 44" class="mr-1.5 grid size-2.5 shrink-0 place-items-center rounded-sm opacity-0 hover:bg-white/25 group-hover/fx:opacity-100" aria-label="Remove effect" @pointerdown.stop @click.stop="removeEffect(item)"><X class="size-2" /></button>
+                    <template v-if="!item.locked && !row.track.locked">
+                      <div class="absolute inset-y-0 left-0 w-1.5 cursor-ew-resize hover:bg-white/60" @pointerdown="startEffect($event, item, row.track, 'start')" />
+                      <div class="absolute inset-y-0 right-0 w-1.5 cursor-ew-resize hover:bg-white/60" @pointerdown="startEffect($event, item, row.track, 'end')" />
+                    </template>
+                  </div>
                   <template v-if="!item.locked && !row.track.locked">
                     <div class="absolute inset-y-0 left-0 z-10 w-2 cursor-ew-resize rounded-l-[4px] bg-white/0 transition-colors hover:bg-white/80" :class="editor.selectedIds.includes(item.id) && 'bg-white/70'" @pointerdown="startTrim($event, item, 'start')" />
                     <div class="absolute inset-y-0 right-0 z-10 w-2 cursor-ew-resize rounded-r-[4px] bg-white/0 transition-colors hover:bg-white/80" :class="editor.selectedIds.includes(item.id) && 'bg-white/70'" @pointerdown="startTrim($event, item, 'end')" />
                   </template>
                 </div>
 
-                <button
-                  v-for="seam in seamsByTrack.get(row.track.id) ?? []" :key="`seam-${seam.to.id}`"
-                  class="absolute top-1/2 z-20 grid size-5 -translate-x-1/2 -translate-y-1/2 place-items-center rounded border transition-opacity"
-                  :class="seam.kind !== 'none' ? 'border-accent bg-accent text-accent-ink opacity-100' : (dropHint?.kind === 'seam' && dropHint.seam.to.id === seam.to.id) || (drag.payload?.type === 'transition') ? 'border-accent bg-panel text-accent opacity-100' : 'border-line-strong bg-panel text-muted opacity-0 hover:opacity-100 group-hover:opacity-100'"
-                  :style="{ left: `${x(seam.cut)}px` }"
-                  :title="transitionLabel(seam)"
-                  :aria-label="transitionLabel(seam)"
-                  @pointerdown.stop
-                  @click="openSeam(seam)"
-                >
-                  <Blend class="size-3" />
-                </button>
+                <template v-for="seam in seamsByTrack.get(row.track.id) ?? []" :key="`seam-${seam.to.id}`">
+                  <div
+                    v-if="seam.kind !== 'none'"
+                    class="group/tr absolute top-1/2 z-20 flex h-[54%] min-w-[14px] -translate-y-1/2 cursor-pointer items-center justify-center gap-1 overflow-hidden rounded-[4px] border text-[10px] font-medium text-white shadow-[0_1px_4px_rgba(0,0,0,0.45)] backdrop-blur-sm"
+                    :class="(dropHint?.kind === 'seam' && dropHint.seam.to.id === seam.to.id) || editor.primaryId === seam.to.id || resizingSeam === seam.to.id ? 'border-white bg-accent/70' : 'border-accent/70 bg-[#1c2a45]/90 hover:bg-[#243656]/90'"
+                    :style="{ left: `${x(seam.cut - seam.duration / 2)}px`, width: `${seam.duration * zoom}px` }"
+                    :title="`${transitionLabel(seam)} - drag the edges to change the length`"
+                    @pointerdown.stop
+                    @click="openSeam(seam)"
+                  >
+                    <Blend class="size-3 shrink-0" />
+                    <span v-if="seam.duration * zoom > 56 || resizingSeam === seam.to.id" class="truncate tabular-nums">{{ seam.duration.toFixed(1) }}s</span>
+                    <button v-if="seamEditable(seam, row.track) && seam.duration * zoom > 64" class="absolute right-1.5 top-1/2 grid size-3.5 -translate-y-1/2 place-items-center rounded-sm opacity-0 hover:bg-white/25 group-hover/tr:opacity-100" aria-label="Remove transition" @pointerdown.stop @click.stop="editor.setTransition(seam.to.id, 'none')"><X class="size-2.5" /></button>
+                    <template v-if="seamEditable(seam, row.track)">
+                      <div class="absolute inset-y-0 left-0 w-1.5 cursor-ew-resize hover:bg-white/60" @pointerdown="startTransitionResize($event, seam, 'start')" />
+                      <div class="absolute inset-y-0 right-0 w-1.5 cursor-ew-resize hover:bg-white/60" @pointerdown="startTransitionResize($event, seam, 'end')" />
+                    </template>
+                  </div>
+                  <button
+                    v-else
+                    class="absolute top-1/2 z-20 grid size-5 -translate-x-1/2 -translate-y-1/2 place-items-center rounded border transition-[opacity,transform]"
+                    :class="dropHint?.kind === 'seam' && dropHint.seam.to.id === seam.to.id ? 'scale-125 border-accent bg-accent text-accent-ink opacity-100' : drag.payload?.type === 'transition' ? 'border-accent bg-panel text-accent opacity-100' : 'border-line-strong bg-panel text-muted opacity-0 hover:opacity-100 group-hover:opacity-100'"
+                    :style="{ left: `${x(seam.cut)}px` }"
+                    :title="transitionLabel(seam)"
+                    :aria-label="transitionLabel(seam)"
+                    @pointerdown.stop
+                    @click="openSeam(seam)"
+                  >
+                    <Plus class="size-3" />
+                  </button>
+                </template>
               </div>
 
+              <div v-if="trackDropLine !== null" class="pointer-events-none absolute inset-x-0 z-30 h-0.5 -translate-y-1/2 bg-accent" :style="{ top: `${trackDropLine}px` }" />
               <div v-if="dropHint?.kind === 'track' && dropRow" class="pointer-events-none absolute z-20 rounded-[5px] border-2 border-dashed border-accent bg-accent/15" :style="{ left: `${x(dropHint.start)}px`, width: `${Math.max(6, dropHint.duration * zoom)}px`, top: `${dropRow.top}px`, height: `${dropRow.height}px` }" />
               <div v-else-if="dropHint?.kind === 'new'" class="pointer-events-none absolute z-20 h-0.5 rounded bg-accent" :style="{ left: `${x(dropHint.start)}px`, width: `${Math.max(40, dropHint.duration * zoom)}px`, top: `${dropHint.top}px` }" />
               <div v-if="marquee" class="pointer-events-none absolute z-30 border border-accent bg-accent/10" :style="{ left: `${Math.min(marquee.x0, marquee.x1)}px`, top: `${Math.min(marquee.y0, marquee.y1)}px`, width: `${Math.abs(marquee.x1 - marquee.x0)}px`, height: `${Math.abs(marquee.y1 - marquee.y0)}px` }" />

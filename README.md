@@ -17,7 +17,7 @@ Lightweight & fast.
 ![Vue 3](https://img.shields.io/badge/Vue-3-42b883?logo=vuedotjs&logoColor=white)
 ![FFmpeg](https://img.shields.io/badge/FFmpeg-required-007808?logo=ffmpeg&logoColor=white)
 
-<img src="docs/editor.webp" alt="ViralFlow editor with a vertical project, a photo overlay selected on the canvas and captions on the timeline">
+<img src="docs/editor.webp" alt="ViralFlow editor with a vertical project, text styles open, a photo overlay selected on the canvas and word-highlight captions on the timeline">
 
 </div>
 
@@ -25,17 +25,17 @@ Lightweight & fast.
 
 - Multi-track timeline with video, photos, text, stickers and audio.
 - Move, scale and rotate anything right on the preview, with keyframes for animation.
-- Auto captions with word-by-word timing, generated locally with Whisper.
-- Transitions, in/out animations, effects and color correction.
-- Text with custom fonts, outlines, backgrounds and shadows.
+- Auto captions with word-by-word timing, generated locally with Whisper, with styles that light up each spoken word.
+- Transitions and effects you drag onto the timeline and stretch to length, plus in/out animations and color correction.
+- Text styles made for short-form video, with custom fonts, outlines, boxes, glows and shadows.
 - Export to MP4, MOV or WebM up to 4K, with optional GPU encoding.
 - Optional AI tools through your own OpenRouter key.
 
 <table>
   <tr>
-    <td width="40%"><img src="docs/captions.webp" alt="Captions panel and caption track"></td>
-    <td width="40%"><img src="docs/color.webp" alt="Effects panel and color adjustments"></td>
-    <td width="20%"><img src="docs/export-preview.webp" alt="Exported 9:16 video"></td>
+    <td width="40%"><img src="docs/captions.webp" alt="Captions panel and a caption with the spoken word highlighted"></td>
+    <td width="40%"><img src="docs/effects.webp" alt="Effects panel, color adjustments and effects placed on clips in the timeline"></td>
+    <td width="20%"><img src="docs/export-preview.webp" alt="Exported 9:16 video with a highlighted caption"></td>
   </tr>
   <tr>
     <td align="center"><sub>Captions</sub></td>

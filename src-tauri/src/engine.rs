@@ -478,6 +478,35 @@ pub fn resolve_effect(effect: Option<&str>, elapsed: f64, duration: f64) -> Effe
     }
 }
 
+pub const MIN_EFFECT: f64 = 0.1;
+
+/// Mirrors effectWindow in effects.ts.
+pub fn effect_window(item: &TimelineItem) -> (f64, f64) {
+    let Some(range) = item.effect_range else { return (0.0, item.duration) };
+    let start = clamp(if range.start.is_finite() { range.start } else { 0.0 }, 0.0, (item.duration - MIN_EFFECT).max(0.0));
+    let duration = clamp(if range.duration.is_finite() { range.duration } else { item.duration }, MIN_EFFECT.min(item.duration - start), item.duration - start);
+    (start, duration)
+}
+
+/// Mirrors resolveItemEffect in effects.ts.
+pub fn resolve_item_effect(item: &TimelineItem, elapsed: f64) -> EffectState {
+    let effect = item.effect.as_deref();
+    if matches!(effect, None | Some("none")) {
+        return EffectState::default();
+    }
+    if item.effect_range.is_none() {
+        return resolve_effect(effect, elapsed, item.duration);
+    }
+    let (start, duration) = effect_window(item);
+    let local = elapsed - start;
+    let touches_start = start <= 1e-6;
+    let touches_end = start + duration >= item.duration - 1e-6;
+    if (local < 0.0 && !touches_start) || (local > duration && !touches_end) {
+        return EffectState::default();
+    }
+    resolve_effect(effect, local, duration)
+}
+
 // --------------------------------------------------------- transitions.ts
 
 pub const MIN_TRANSITION: f64 = 0.1;
@@ -737,7 +766,7 @@ pub fn build_layer(project: &Project, index: (usize, usize), time: f64, boxes: &
     let elapsed = time - item.start;
     let transform = resolve_transform(item, elapsed);
     let motion = resolve_motion(item, elapsed);
-    let effect = if item.kind == "shape" { EffectState::default() } else { resolve_effect(item.effect.as_deref(), elapsed, item.duration) };
+    let effect = if item.kind == "shape" { EffectState::default() } else { resolve_item_effect(item, elapsed) };
     let transition = resolve_transition(connection, &item.id, time);
 
     let mut matrix = IDENTITY;

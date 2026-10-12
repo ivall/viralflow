@@ -1,4 +1,4 @@
-import { defineStore } from 'pinia'
+import { acceptHMRUpdate, defineStore } from 'pinia'
 import { ref } from 'vue'
 
 export type ToastTone = 'info' | 'success' | 'error'
@@ -36,3 +36,6 @@ export const useToasts = defineStore('toasts', () => {
     error: (title: string, detail?: string) => show(title, { tone: 'error', detail })
   }
 })
+
+// Keep the store's actions current while editing in dev (no stale instance after hot reload).
+if (import.meta.hot) import.meta.hot.accept(acceptHMRUpdate(useToasts, import.meta.hot))

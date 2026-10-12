@@ -1,4 +1,4 @@
-import { defineStore } from 'pinia'
+import { acceptHMRUpdate, defineStore } from 'pinia'
 import { ref } from 'vue'
 import { errorMessage, ipc, type KeyStatus, type Settings, type ToolsStatus } from '@/services/ipc'
 import { useToasts } from './toast'
@@ -62,3 +62,6 @@ export const useSettings = defineStore('settings', () => {
 
   return { value, tools, loaded, key, load, update, refreshTools, saveKey }
 })
+
+// Keep the store's actions current while editing in dev (no stale instance after hot reload).
+if (import.meta.hot) import.meta.hot.accept(acceptHMRUpdate(useSettings, import.meta.hot))

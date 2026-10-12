@@ -13,12 +13,12 @@ const props = withDefaults(defineProps<{
 const classes = computed(() => [
   'inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap font-medium transition-colors disabled:pointer-events-none disabled:opacity-40',
   props.size === 'sm'
-    ? (props.icon ? 'size-7 rounded-md' : 'h-7 rounded-md px-2.5 text-xs')
+    ? (props.icon ? 'size-7 rounded-lg' : 'h-7 rounded-lg px-2.5 text-xs')
     : props.size === 'lg'
       ? (props.icon ? 'size-10 rounded-lg' : 'h-10 rounded-lg px-4 text-sm')
-      : (props.icon ? 'size-8 rounded-md' : 'h-8 rounded-md px-3 text-xs'),
+      : (props.icon ? 'size-8 rounded-lg' : 'h-8 rounded-lg px-3.5 text-xs'),
   {
-    primary: 'bg-accent text-accent-ink hover:bg-[#6fd5f4]',
+    primary: 'bg-accent text-accent-ink hover:bg-accent-hover',
     secondary: 'bg-raised text-fg hover:bg-hover',
     ghost: props.active ? 'bg-hover text-fg' : 'text-muted hover:bg-hover hover:text-fg',
     danger: 'bg-danger/15 text-danger hover:bg-danger/25',
