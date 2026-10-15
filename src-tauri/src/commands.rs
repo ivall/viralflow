@@ -377,7 +377,7 @@ pub struct TranscribeRequest {
 }
 
 #[tauri::command]
-pub async fn transcribe(state: State<'_, AppState>, request: TranscribeRequest) -> AppResult<Transcript> {
+pub async fn transcribe(app: AppHandle, state: State<'_, AppState>, request: TranscribeRequest) -> AppResult<Transcript> {
     let tools = state.tools()?;
     let settings = state.settings.get();
     if settings.transcription_provider == "openrouter" {
@@ -391,7 +391,10 @@ pub async fn transcribe(state: State<'_, AppState>, request: TranscribeRequest) 
     let model = whisper::model_path(&state.paths.models, &settings.whisper_model);
     let work = state.paths.jobs.join(format!("whisper-{}", chrono::Utc::now().timestamp_millis()));
     blocking(move || {
-        let result = whisper::transcribe(&tools, &model, Path::new(&request.path), request.offset, request.duration, &request.language, &work);
+        let mut report = |progress: whisper::Progress| {
+            let _ = app.emit("transcribe-progress", progress);
+        };
+        let result = whisper::transcribe(&tools, &model, Path::new(&request.path), request.offset, request.duration, &request.language, &work, &mut report);
         let _ = std::fs::remove_dir_all(&work);
         let (segments, words) = result?;
         Ok(build_transcript(segments, words, request.duration, request.options))

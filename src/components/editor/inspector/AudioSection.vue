@@ -13,6 +13,7 @@ const editor = useEditor()
 const asset = computed(() => props.item.assetId ? editor.assetsById.get(props.item.assetId) : undefined)
 const silent = computed(() => props.item.kind === 'video' && asset.value?.hasAudio === false)
 const volume = computed(() => props.item.volume ?? 1)
+const enhance = computed(() => props.item.voiceEnhance ?? 0)
 const maxFade = computed(() => Math.max(0.1, Math.min(10, props.item.duration / 2)))
 
 function decibels(value: number) {
@@ -30,6 +31,8 @@ function decibels(value: number) {
       <p class="-mt-1 pl-[96px] text-[11px] text-faint">{{ decibels(volume) }}</p>
       <UiSlider :model-value="item.fadeIn ?? 0" label="Fade in" :display="`${(item.fadeIn ?? 0).toFixed(1)}s`" :min="0" :max="maxFade" :step="0.1" @start="editor.beginChange()" @update:model-value="value => editor.updateSelected({ fadeIn: value }, false)" />
       <UiSlider :model-value="item.fadeOut ?? 0" label="Fade out" :display="`${(item.fadeOut ?? 0).toFixed(1)}s`" :min="0" :max="maxFade" :step="0.1" @start="editor.beginChange()" @update:model-value="value => editor.updateSelected({ fadeOut: value }, false)" />
+      <UiSlider :model-value="enhance * 100" label="Clean voice" :display="enhance ? `${Math.round(enhance * 100)}%` : 'Off'" :min="0" :max="100" :step="5" @start="editor.beginChange()" @update:model-value="value => editor.updateSelected({ voiceEnhance: value ? value / 100 : undefined }, false)" />
+      <p v-if="enhance" class="-mt-1 pl-[96px] text-[11px] text-faint">Removes rumble, hiss and harsh “s” sounds and evens out the level. Noise removal is heard in the export.</p>
       <div class="flex gap-2 pt-1">
         <UiButton :variant="item.muted ? 'primary' : 'outline'" size="sm" class="flex-1" @click="editor.toggleItemFlag('muted')"><VolumeX class="size-3.5" />{{ item.muted ? 'Muted' : 'Mute' }}</UiButton>
         <UiButton variant="outline" size="sm" class="flex-1" @click="emit('captions')"><Captions class="size-3.5" />Auto captions</UiButton>

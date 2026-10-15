@@ -1,6 +1,6 @@
 import { acceptHMRUpdate, defineStore } from 'pinia'
 import { computed, ref, shallowRef, toRaw, watch } from 'vue'
-import { defaultInDuration, defaultOutDuration } from '@/lib/engine/animation'
+import { captionRun, defaultInDuration, defaultOutDuration, motionSpan, type MotionSpan } from '@/lib/engine/animation'
 import { adjacentKeyframe, normalizeTransform, patchKeyframeAt, retimeKeyframes, setKeyframeEasing, sortedKeyframes, toggleKeyframe, trimKeyframes } from '@/lib/engine/keyframes'
 import { clamp, uid } from '@/lib/engine/math'
 import { contentEnd } from '@/lib/engine/scene'
@@ -10,7 +10,7 @@ import { effectWindow, MIN_EFFECT } from '@/lib/engine/effects'
 import { migrateProject } from '@/lib/migrate'
 import { CAPTION_PRESET, createTrack, mediaItemDefaults, presetTextStyle, trackKindFor, type TextPreset } from '@/lib/project'
 import { MIN_CLIP_DURATION, placeTimelineSelection, placeTimelineSpan, repairTimelineLayout, rippleTimelineResize, trimTimelineSpan, type TimelineMoveMode } from '@/lib/timeline/placement'
-import type { AnimationInKind, AnimationOutKind, CaptionCue, EffectKind, EffectRange, Easing, ExportSettings, ItemKind, MediaAsset, Project, TextStyle, TimelineItem, Track, TrackKind, Transform, TransitionKind } from '@/lib/types'
+import type { AnimationInKind, AnimationOutKind, Bezier, CaptionCue, EffectKind, EffectRange, Easing, ExportSettings, ItemKind, MediaAsset, Project, TextStyle, TimelineItem, Track, TrackKind, Transform, TransitionKind } from '@/lib/types'
 import { errorMessage, ipc } from '@/services/ipc'
 import { createPreview } from '@/services/media'
 import { useSettings } from './settings'
@@ -502,9 +502,8 @@ export const useEditor = defineStore('editor', () => {
     if (!targets.length) return
     snapshot()
     for (const item of targets) {
-      const continued = !item.animIn && (item.text?.highlightIndex ?? -1) > 0 && Boolean(item.groupId?.startsWith('captions-'))
       item.text = presetTextStyle({ ...DEFAULT_TEXT_STYLE, ...item.text }, preset)
-      item.animIn = preset.animIn && !continued ? { ...preset.animIn } : undefined
+      item.animIn = preset.animIn ? { ...preset.animIn } : undefined
     }
     touched()
   }
@@ -801,11 +800,12 @@ export const useEditor = defineStore('editor', () => {
     if (keyframe) seek(item.start + keyframe.time)
   }
 
-  function setKeyframeEasingAtPlayhead(easing: Easing) {
+  /** `record` = false while dragging a curve handle (call beginChange() first). */
+  function setKeyframeEasingAtPlayhead(easing: Easing, bezier?: Bezier, record = true) {
     const item = selectedItem.value
     if (!item?.keyframes?.length || !editable(item.id)) return
-    snapshot()
-    item.keyframes = setKeyframeEasing(item, currentTime.value - item.start, easing, keyframeTolerance.value)
+    if (record) snapshot()
+    item.keyframes = setKeyframeEasing(item, currentTime.value - item.start, easing, keyframeTolerance.value, bezier)
     touched()
   }
 
@@ -831,14 +831,47 @@ export const useEditor = defineStore('editor', () => {
 
   // ------------------------------------------------------------ animations & transitions
 
+  /**
+   * Selected clips grouped with the other word clips of their word-highlight caption:
+   * such a caption animates as one text, so every word clip gets the same animation.
+   */
+  function animationTargets() {
+    const seen = new Set<string>()
+    const groups: Array<{ span: MotionSpan; items: TimelineItem[] }> = []
+    for (const id of selectedIds.value) {
+      const found = editable(id)
+      if (!found || found.item.kind === 'audio' || seen.has(id)) continue
+      const run = captionRun(found.item, found.track.items)
+      run.forEach(item => seen.add(item.id))
+      groups.push({ span: motionSpan(found.item, found.track.items), items: run.filter(item => editable(item.id)) })
+    }
+    return groups
+  }
+
   function setAnimation(slot: 'in' | 'out', kind: AnimationInKind | AnimationOutKind) {
-    const targets = selectedItems.value.filter(item => item.kind !== 'audio')
-    if (!targets.length) return
+    const groups = animationTargets()
+    if (!groups.length) return
     snapshot()
-    for (const item of targets) {
-      if (!editable(item.id)) continue
-      if (slot === 'in') item.animIn = { kind: kind as AnimationInKind, duration: item.animIn?.kind !== 'none' && item.animIn?.duration ? item.animIn.duration : defaultInDuration(kind as AnimationInKind) }
-      else item.animOut = { kind: kind as AnimationOutKind, duration: item.animOut?.kind !== 'none' && item.animOut?.duration ? item.animOut.duration : defaultOutDuration(kind as AnimationOutKind) }
+    for (const { span, items } of groups) {
+      const current = slot === 'in' ? span.animIn : span.animOut
+      const duration = current?.kind !== 'none' && current?.duration ? current.duration : slot === 'in' ? defaultInDuration(kind as AnimationInKind) : defaultOutDuration(kind as AnimationOutKind)
+      for (const item of items) {
+        if (slot === 'in') item.animIn = { kind: kind as AnimationInKind, duration }
+        else item.animOut = { kind: kind as AnimationOutKind, duration }
+      }
+    }
+    touched()
+  }
+
+  /** Continuous change (slider): call beginChange() first. */
+  function setAnimationDuration(slot: 'in' | 'out', duration: number) {
+    for (const { span, items } of animationTargets()) {
+      const current = slot === 'in' ? span.animIn : span.animOut
+      if (!current || current.kind === 'none') continue
+      for (const item of items) {
+        if (slot === 'in') item.animIn = { kind: current.kind as AnimationInKind, duration }
+        else item.animOut = { kind: current.kind as AnimationOutKind, duration }
+      }
     }
     touched()
   }
@@ -961,7 +994,8 @@ export const useEditor = defineStore('editor', () => {
       groupId,
       transform: normalizeTransform({ x: 50, y: options.y ?? 72 }),
       text: { ...style, content: cue.text, highlightIndex: cue.highlightIndex ?? -1 },
-      animIn: cue.continued ? undefined : { kind: 'pop', duration: 0.18 }
+      // Word clips of a highlight caption share it; it plays once, on the first word.
+      animIn: { kind: 'pop', duration: 0.18 }
     }))
     const occupied = track.items.filter(item => items.some(cue => item.start < cue.start + cue.duration && cue.start < item.start + item.duration))
     if (occupied.length) {
@@ -986,12 +1020,11 @@ export const useEditor = defineStore('editor', () => {
     for (const track of tracks.value) {
       for (const candidate of track.items) {
         if (candidate.groupId !== item.groupId || candidate.id === item.id || candidate.kind !== 'text') continue
-        // Word-highlight captions keep which word is lit and stay still between words.
+        // Word-highlight captions keep which word is lit.
         const highlightIndex = candidate.text?.highlightIndex ?? -1
-        const continued = !candidate.animIn && highlightIndex > 0
         candidate.text = { ...structuredClone(toRaw(item.text)), content: candidate.text?.content ?? '', highlightIndex }
         candidate.transform = normalizeTransform(item.transform)
-        candidate.animIn = item.animIn && !continued ? { ...item.animIn } : undefined
+        candidate.animIn = item.animIn ? { ...item.animIn } : undefined
         candidate.animOut = item.animOut ? { ...item.animOut } : undefined
         count++
       }
@@ -1046,7 +1079,7 @@ export const useEditor = defineStore('editor', () => {
     moveItem, moveItems, trimItem, nudgeSelected, trimToPlayhead,
     splitAt, deleteSelected, duplicateSelected, copySelected, cutSelected, paste, groupSelected, ungroupSelected, toggleItemFlag,
     toggleKeyframeAtPlayhead, jumpKeyframe, setKeyframeEasingAtPlayhead, moveKeyframe, clearKeyframes,
-    setAnimation, setTransition, setTransitionForTrack, setEffect, setEffectRange,
+    setAnimation, setAnimationDuration, setTransition, setTransitionForTrack, setEffect, setEffectRange,
     addTrack, updateTrack, removeTrack, moveTrack,
     applyCaptions, applyStyleToGroup,
     rename, setCanvas, setBackground, updateExport

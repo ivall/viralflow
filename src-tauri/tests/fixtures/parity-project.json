@@ -7,6 +7,17 @@
     { "id": "c", "kind": "image", "name": "c", "path": "c.png", "width": 800, "height": 600, "size": 1, "addedAt": "" }
   ],
   "tracks": [
+    { "id": "t-cap", "name": "Captions", "kind": "text", "items": [
+      { "id": "w0", "trackId": "t-cap", "kind": "text", "name": "w", "start": 5, "duration": 0.5, "groupId": "captions-v1",
+        "text": { "content": "one two three", "highlightMode": "color", "highlightIndex": 0 },
+        "animIn": { "kind": "pop", "duration": 0.3 }, "animOut": { "kind": "fade", "duration": 0.3 } },
+      { "id": "w1", "trackId": "t-cap", "kind": "text", "name": "w", "start": 5.5, "duration": 0.5, "groupId": "captions-v1",
+        "text": { "content": "one two three", "highlightMode": "color", "highlightIndex": 1 },
+        "animIn": { "kind": "pop", "duration": 0.3 }, "animOut": { "kind": "fade", "duration": 0.3 } },
+      { "id": "w2", "trackId": "t-cap", "kind": "text", "name": "w", "start": 6, "duration": 0.6, "groupId": "captions-v1",
+        "text": { "content": "one two three", "highlightMode": "color", "highlightIndex": 2 },
+        "animIn": { "kind": "pop", "duration": 0.3 }, "animOut": { "kind": "fade", "duration": 0.3 } }
+    ]},
     { "id": "t-shapes", "name": "Shapes", "kind": "video", "items": [
       { "id": "s1", "trackId": "t-shapes", "kind": "shape", "name": "s", "start": 0.5, "duration": 3, "radius": 20,
         "shape": { "kind": "rect", "width": 40, "height": 10, "color": "#ff0000", "blur": 30 },
@@ -18,8 +29,8 @@
         "transform": { "x": 50, "y": 50, "scale": 0.7, "rotation": 0, "opacity": 1 },
         "keyframes": [
           { "id": "k1", "time": 0.5, "transform": { "x": 20, "y": 30, "scale": 0.5, "rotation": -10, "opacity": 0.5 }, "easing": "linear" },
-          { "id": "k2", "time": 2.5, "transform": { "x": 80, "y": 70, "scale": 1.1, "rotation": 25, "opacity": 1 }, "easing": "ease-in-out" },
-          { "id": "k3", "time": 3.5, "transform": { "x": 60, "y": 40, "scale": 0.9, "rotation": 0, "opacity": 0.9 }, "easing": "ease-out" }
+          { "id": "k2", "time": 2.5, "transform": { "x": 80, "y": 70, "scale": 1.1, "rotation": 25, "opacity": 1 }, "easing": "back-out" },
+          { "id": "k3", "time": 3.5, "transform": { "x": 60, "y": 40, "scale": 0.9, "rotation": 0, "opacity": 0.9 }, "easing": "custom", "bezier": [0.2, 1.4, 0.6, -0.3] }
         ],
         "adjust": { "exposure": 0.2, "brightness": -0.1, "contrast": 0.3, "saturation": -0.4, "temperature": 0.5, "tint": -0.2, "hue": 0.1, "vignette": 0.4 },
         "effect": "glitch", "blend": "screen" }

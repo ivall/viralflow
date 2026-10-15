@@ -1,5 +1,5 @@
 import type { BlendMode, Crop, Fit, MediaAsset, Project, TimelineItem, Track } from '../types'
-import { resolveMotion } from './animation'
+import { motionSpan, resolveMotion } from './animation'
 import { adjustMatrix, IDENTITY, isIdentity, multiply, type ColorMatrix } from './color'
 import { resolveItemEffect } from './effects'
 import { resolveTransform } from './keyframes'
@@ -119,7 +119,8 @@ export function buildLayer(project: Project, item: TimelineItem, trackIndex: num
   if (!box) return null
   const elapsed = time - item.start
   const transform = resolveTransform(item, elapsed)
-  const motion = options.staticOnly ? null : resolveMotion(item, elapsed)
+  const span = options.staticOnly ? null : motionSpan(item, project.tracks[trackIndex]?.items ?? [])
+  const motion = span ? resolveMotion(span, time - span.start) : null
   const effect = options.staticOnly || item.kind === 'shape' ? null : resolveItemEffect(item, elapsed)
   const transition = options.staticOnly ? IDLE_TRANSITION : resolveTransition(options.connection, item.id, time)
 

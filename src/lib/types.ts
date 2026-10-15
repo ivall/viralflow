@@ -8,7 +8,9 @@ export type ItemKind = 'video' | 'image' | 'audio' | 'text' | 'shape'
 export type MediaKind = 'video' | 'image' | 'audio'
 
 export type Fit = 'contain' | 'cover' | 'fill'
-export type Easing = 'linear' | 'ease-in' | 'ease-out' | 'ease-in-out'
+export type Easing = 'linear' | 'ease-in' | 'ease-out' | 'ease-in-out' | 'back-in' | 'back-out' | 'back-in-out' | 'custom'
+/** CSS-style cubic-bezier(x1, y1, x2, y2); y may leave 0..1 to overshoot. */
+export type Bezier = [number, number, number, number]
 export type BlendMode = 'normal' | 'multiply' | 'screen' | 'overlay' | 'darken' | 'lighten' | 'color-dodge' | 'color-burn' | 'hard-light' | 'soft-light' | 'difference' | 'exclusion'
 
 export type AnimationInKind = 'none' | 'fade' | 'pop' | 'rise' | 'drop' | 'slide-left' | 'slide-right' | 'zoom-in' | 'zoom-out' | 'bounce' | 'spin' | 'blur' | 'typewriter'
@@ -35,6 +37,8 @@ export interface Keyframe {
   transform: Transform
   /** Easing of the segment that ends at this keyframe. */
   easing: Easing
+  /** Curve used when easing is 'custom'. */
+  bezier?: Bezier
 }
 
 export interface Animation<K extends string> {
@@ -131,6 +135,8 @@ export interface TimelineItem {
   muted?: boolean
   fadeIn?: number
   fadeOut?: number
+  /** Voice cleanup strength, 0..1 (0 or absent = off). */
+  voiceEnhance?: number
 
   transform?: Transform
   keyframes?: Keyframe[]
@@ -197,6 +203,8 @@ export interface ExportSettings {
   resolution: number
   fps: Fps
   hardware: boolean
+  /** Target loudness of the soundtrack in LUFS; absent leaves the mix as it is. */
+  loudness?: number
 }
 
 export interface Project {
@@ -233,6 +241,4 @@ export interface CaptionCue {
   duration: number
   /** Word lit up while this cue shows (word-by-word highlight captions). */
   highlightIndex?: number
-  /** Same caption as the previous cue, only the highlight moved on. */
-  continued?: boolean
 }

@@ -1,4 +1,4 @@
-import type { Easing } from '../types'
+import type { Bezier, Easing } from '../types'
 
 export const EPSILON = 1e-4
 
@@ -23,12 +23,72 @@ export function easeInOutCubic(value: number) {
   return v < 0.5 ? 4 * v * v * v : 1 - Math.pow(-2 * v + 2, 3) / 2
 }
 
-export function applyEasing(progress: number, easing: Easing) {
+/** Bezier presets; the named curves that predate custom curves keep their own formulas. */
+export const EASING_CURVES: Record<Exclude<Easing, 'custom'>, Bezier> = {
+  linear: [0.25, 0.25, 0.75, 0.75],
+  'ease-in': [0.42, 0, 1, 1],
+  'ease-out': [0, 0, 0.58, 1],
+  'ease-in-out': [0.42, 0, 0.58, 1],
+  'back-in': [0.36, 0, 0.66, -0.56],
+  'back-out': [0.34, 1.56, 0.64, 1],
+  'back-in-out': [0.68, -0.6, 0.32, 1.6]
+}
+
+export function sanitizeBezier(value: unknown): Bezier | null {
+  if (!Array.isArray(value) || value.length !== 4 || !value.every(Number.isFinite)) return null
+  const [x1, y1, x2, y2] = value as number[]
+  return [clamp(x1, 0, 1), clamp(y1, -1, 2), clamp(x2, 0, 1), clamp(y2, -1, 2)]
+}
+
+/**
+ * y of a CSS cubic-bezier at x (0..1). Newton steps with a bisection fallback;
+ * mirrored operation for operation in Rust (engine::cubic_bezier).
+ */
+export function cubicBezier(curve: Bezier, x: number) {
+  const [x1, y1, x2, y2] = sanitizeBezier(curve) ?? EASING_CURVES.linear
+  const cx = 3 * x1
+  const bx = 3 * (x2 - x1) - cx
+  const ax = 1 - cx - bx
+  const cy = 3 * y1
+  const by = 3 * (y2 - y1) - cy
+  const ay = 1 - cy - by
+  const sampleX = (t: number) => ((ax * t + bx) * t + cx) * t
+  const target = clamp(x, 0, 1)
+  let t = target
+  let solved = false
+  for (let index = 0; index < 8; index++) {
+    const error = sampleX(t) - target
+    if (Math.abs(error) < 1e-7) { solved = true; break }
+    const slope = (3 * ax * t + 2 * bx) * t + cx
+    if (Math.abs(slope) < 1e-6) break
+    t -= error / slope
+  }
+  if (!solved) {
+    let low = 0
+    let high = 1
+    t = target
+    for (let index = 0; index < 60; index++) {
+      const value = sampleX(t)
+      if (Math.abs(value - target) < 1e-7) break
+      if (target > value) low = t
+      else high = t
+      t = (high - low) / 2 + low
+    }
+  }
+  return ((ay * t + by) * t + cy) * t
+}
+
+export function applyEasing(progress: number, easing: Easing, bezier?: Bezier) {
   const value = clamp(progress, 0, 1)
   switch (easing) {
     case 'ease-in': return value * value
     case 'ease-out': return 1 - (1 - value) * (1 - value)
     case 'ease-in-out': return value < 0.5 ? 2 * value * value : 1 - Math.pow(-2 * value + 2, 2) / 2
+    case 'back-in': case 'back-out': case 'back-in-out': return cubicBezier(EASING_CURVES[easing], value)
+    case 'custom': {
+      const curve = sanitizeBezier(bezier)
+      return curve ? cubicBezier(curve, value) : value
+    }
     default: return value
   }
 }

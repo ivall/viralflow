@@ -36,6 +36,12 @@ const resolutionOptions = computed(() => {
 })
 const fpsOptions = ([24, 25, 30, 50, 60] as Fps[]).map(value => ({ value, label: `${value} fps` }))
 const qualityOptions: Array<{ value: ExportQuality; label: string }> = [{ value: 'draft', label: 'Draft' }, { value: 'standard', label: 'Good' }, { value: 'high', label: 'High' }, { value: 'ultra', label: 'Best' }]
+const loudnessOptions = [
+  { value: 0, label: 'Keep as mixed' },
+  { value: -14, label: '−14 LUFS - TikTok, Reels, YouTube' },
+  { value: -16, label: '−16 LUFS - podcasts, Spotify' },
+  { value: -23, label: '−23 LUFS - broadcast' }
+]
 const size = computed(() => outputSize(project.value))
 const duration = computed(() => editor.playbackEnd)
 const estimate = computed(() => estimateMegabytes(project.value, duration.value))
@@ -137,6 +143,9 @@ onBeforeUnmount(() => {
           <UiSwitch :model-value="project.export.hardware && hardwareAvailable" label="GPU encoding" :disabled="!hardwareAvailable" @update:model-value="value => editor.updateExport({ hardware: value })" />
           <span class="text-2xs text-muted">{{ hardwareAvailable ? 'Faster, slightly larger files' : 'Not available on this computer' }}</span>
         </div>
+      </UiField>
+      <UiField label="Loudness" hint="Evens out the volume of the whole soundtrack to the level the platform plays at">
+        <UiSelect :model-value="project.export.loudness ?? 0" :options="loudnessOptions" label="Loudness" @update:model-value="value => editor.updateExport({ loudness: value || undefined })" />
       </UiField>
       <div class="flex items-center justify-between rounded-md bg-app px-3 py-2 text-2xs text-muted">
         <span class="tabular-nums">{{ size.width }}×{{ size.height }} · {{ project.export.fps }} fps</span>

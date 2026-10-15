@@ -6,7 +6,7 @@ import UiField from '@/components/ui/UiField.vue'
 import UiSection from '@/components/ui/UiSection.vue'
 import UiSelect from '@/components/ui/UiSelect.vue'
 import UiSlider from '@/components/ui/UiSlider.vue'
-import { ANIMATIONS_IN, ANIMATIONS_OUT, animationWindows } from '@/lib/engine/animation'
+import { ANIMATIONS_IN, ANIMATIONS_OUT, animationWindows, motionSpan } from '@/lib/engine/animation'
 import { EFFECTS } from '@/lib/engine/effects'
 import { MAX_TRANSITION, MIN_TRANSITION, TRANSITIONS, trackSeams } from '@/lib/engine/transitions'
 import type { AnimationInKind, AnimationOutKind, EffectKind, TimelineItem, TransitionKind } from '@/lib/types'
@@ -14,7 +14,9 @@ import { useEditor } from '@/stores/editor'
 
 const props = defineProps<{ item: TimelineItem }>()
 const editor = useEditor()
-const windows = computed(() => animationWindows(props.item))
+// A word-highlight caption is one clip per word but animates as one text.
+const span = computed(() => motionSpan(props.item, editor.selectedTrack?.items ?? []))
+const windows = computed(() => animationWindows(span.value))
 const seam = computed(() => {
   const track = editor.selectedTrack
   return track ? trackSeams(track, editor.fps).find(candidate => candidate.to.id === props.item.id) ?? null : null
@@ -35,10 +37,10 @@ function setOut(kind: AnimationOutKind) {
 
 /** Plays the animated part of the clip once so the user sees the result. */
 function preview(slot: 'in' | 'out') {
-  const item = props.item
+  const { start, duration } = span.value
   const length = slot === 'in' ? windows.value.inDuration : windows.value.outDuration
   if (!length) return
-  const from = slot === 'in' ? item.start : item.start + item.duration - length - 0.2
+  const from = slot === 'in' ? start : start + duration - length - 0.2
   editor.seek(Math.max(0, from))
   editor.play()
   setTimeout(() => { if (editor.playing) editor.stop() }, (length + 0.35) * 1000)
@@ -54,11 +56,11 @@ function preview(slot: 'in' | 'out') {
       <button
         v-for="preset in ANIMATIONS_IN" :key="preset.kind"
         class="h-8 truncate rounded-md border px-1.5 text-2xs transition-colors"
-        :class="(item.animIn?.kind ?? 'none') === preset.kind ? 'border-accent bg-accent/10 text-fg' : 'border-line text-muted hover:border-line-strong hover:text-fg'"
+        :class="windows.inKind === preset.kind ? 'border-accent bg-accent/10 text-fg' : 'border-line text-muted hover:border-line-strong hover:text-fg'"
         @click="setIn(preset.kind)"
       >{{ preset.label }}</button>
     </div>
-    <UiSlider v-if="windows.inKind !== 'none'" :model-value="item.animIn!.duration" label="Duration" :display="`${item.animIn!.duration.toFixed(2)}s`" :min="0.1" :max="Math.max(0.2, Math.min(5, item.duration))" :step="0.05" @start="editor.beginChange()" @update:model-value="value => editor.updateSelected({ animIn: { kind: item.animIn!.kind, duration: value } }, false)" />
+    <UiSlider v-if="windows.inKind !== 'none'" :model-value="span.animIn!.duration" label="Duration" :display="`${span.animIn!.duration.toFixed(2)}s`" :min="0.1" :max="Math.max(0.2, Math.min(5, span.duration))" :step="0.05" @start="editor.beginChange()" @update:model-value="value => editor.setAnimationDuration('in', value)" />
   </UiSection>
 
   <UiSection title="Out">
@@ -69,11 +71,11 @@ function preview(slot: 'in' | 'out') {
       <button
         v-for="preset in ANIMATIONS_OUT" :key="preset.kind"
         class="h-8 truncate rounded-md border px-1.5 text-2xs transition-colors"
-        :class="(item.animOut?.kind ?? 'none') === preset.kind ? 'border-accent bg-accent/10 text-fg' : 'border-line text-muted hover:border-line-strong hover:text-fg'"
+        :class="windows.outKind === preset.kind ? 'border-accent bg-accent/10 text-fg' : 'border-line text-muted hover:border-line-strong hover:text-fg'"
         @click="setOut(preset.kind)"
       >{{ preset.label }}</button>
     </div>
-    <UiSlider v-if="windows.outKind !== 'none'" :model-value="item.animOut!.duration" label="Duration" :display="`${item.animOut!.duration.toFixed(2)}s`" :min="0.1" :max="Math.max(0.2, Math.min(5, item.duration))" :step="0.05" @start="editor.beginChange()" @update:model-value="value => editor.updateSelected({ animOut: { kind: item.animOut!.kind, duration: value } }, false)" />
+    <UiSlider v-if="windows.outKind !== 'none'" :model-value="span.animOut!.duration" label="Duration" :display="`${span.animOut!.duration.toFixed(2)}s`" :min="0.1" :max="Math.max(0.2, Math.min(5, span.duration))" :step="0.05" @start="editor.beginChange()" @update:model-value="value => editor.setAnimationDuration('out', value)" />
   </UiSection>
 
   <UiSection v-if="item.kind !== 'shape'" title="Effect">

@@ -1,5 +1,5 @@
-import type { Easing, Keyframe, TimelineItem, Transform } from '../types'
-import { applyEasing, clamp, EPSILON, lerp, uid } from './math'
+import type { Bezier, Easing, Keyframe, TimelineItem, Transform } from '../types'
+import { applyEasing, clamp, EASING_CURVES, EPSILON, lerp, uid } from './math'
 
 export const DEFAULT_TRANSFORM: Transform = { x: 50, y: 50, scale: 1, rotation: 0, opacity: 1 }
 export const MIN_SCALE = 0.05
@@ -25,14 +25,15 @@ export function sortedKeyframes(item: Pick<TimelineItem, 'duration' | 'keyframes
     .filter((keyframe, index, list) => index === list.length - 1 || Math.abs(list[index + 1].time - keyframe.time) > EPSILON)
 }
 
-function interpolate(left: Transform, right: Transform, progress: number, easing: Easing): Transform {
-  const t = applyEasing(progress, easing)
+function interpolate(left: Transform, right: Transform, progress: number, easing: Easing, bezier?: Bezier): Transform {
+  const t = applyEasing(progress, easing, bezier)
+  // Overshooting curves may carry scale and opacity past their keyframes.
   return {
     x: lerp(left.x, right.x, t),
     y: lerp(left.y, right.y, t),
-    scale: lerp(left.scale, right.scale, t),
+    scale: Math.max(MIN_SCALE, lerp(left.scale, right.scale, t)),
     rotation: lerp(left.rotation, right.rotation, t),
-    opacity: lerp(left.opacity, right.opacity, t)
+    opacity: clamp(lerp(left.opacity, right.opacity, t), 0, 1)
   }
 }
 
@@ -49,7 +50,7 @@ export function resolveTransform(item: Pick<TimelineItem, 'duration' | 'keyframe
     if (time > right.time) continue
     const left = keyframes[index - 1]
     const span = Math.max(EPSILON, right.time - left.time)
-    return interpolate(normalizeTransform(left.transform), normalizeTransform(right.transform), (time - left.time) / span, right.easing)
+    return interpolate(normalizeTransform(left.transform), normalizeTransform(right.transform), (time - left.time) / span, right.easing, right.bezier)
   }
   return normalizeTransform(keyframes[keyframes.length - 1].transform)
 }
@@ -59,7 +60,9 @@ export function keyframeAt(item: TimelineItem, elapsed: number, tolerance: numbe
 }
 
 function makeKeyframe(transform: Transform, time: number, existing?: Keyframe): Keyframe {
-  return { id: existing?.id ?? uid('kf'), time, transform: { ...transform }, easing: existing?.easing ?? 'linear' }
+  const keyframe: Keyframe = { id: existing?.id ?? uid('kf'), time, transform: { ...transform }, easing: existing?.easing ?? 'linear' }
+  if (existing?.bezier) keyframe.bezier = [...existing.bezier]
+  return keyframe
 }
 
 export function toggleKeyframe(item: TimelineItem, elapsed: number, tolerance: number): Keyframe[] {
@@ -79,8 +82,15 @@ export function patchKeyframeAt(item: TimelineItem, elapsed: number, patch: Part
   return [...keyframes.filter(keyframe => keyframe.id !== existing?.id), next].sort((a, b) => a.time - b.time)
 }
 
-export function setKeyframeEasing(item: TimelineItem, elapsed: number, easing: Easing, tolerance: number): Keyframe[] {
-  return sortedKeyframes(item).map(keyframe => Math.abs(keyframe.time - elapsed) <= tolerance ? { ...keyframe, easing } : keyframe)
+/** A 'custom' easing keeps `bezier` (or the curve it had); the presets drop it. */
+export function setKeyframeEasing(item: TimelineItem, elapsed: number, easing: Easing, tolerance: number, bezier?: Bezier): Keyframe[] {
+  return sortedKeyframes(item).map(keyframe => {
+    if (Math.abs(keyframe.time - elapsed) > tolerance) return keyframe
+    const { bezier: previous, ...rest } = keyframe
+    if (easing !== 'custom') return { ...rest, easing }
+    const curve = bezier ?? previous ?? (keyframe.easing === 'custom' ? null : EASING_CURVES[keyframe.easing]) ?? EASING_CURVES['back-out']
+    return { ...rest, easing, bezier: [...curve] as Bezier }
+  })
 }
 
 export function adjacentKeyframe(item: TimelineItem, elapsed: number, direction: -1 | 1, tolerance: number) {

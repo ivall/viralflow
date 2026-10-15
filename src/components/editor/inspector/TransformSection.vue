@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ChevronLeft, ChevronRight, Diamond, FlipHorizontal2, FlipVertical2, RotateCcw, RotateCw } from '@lucide/vue'
 import { computed } from 'vue'
+import BezierEditor from './BezierEditor.vue'
 import UiButton from '@/components/ui/UiButton.vue'
 import UiField from '@/components/ui/UiField.vue'
 import UiIconButton from '@/components/ui/UiIconButton.vue'
@@ -27,7 +28,8 @@ const blendOptions: Array<{ value: BlendMode; label: string }> = [
   { value: 'hard-light', label: 'Hard light' }, { value: 'soft-light', label: 'Soft light' }, { value: 'difference', label: 'Difference' }, { value: 'exclusion', label: 'Exclusion' }
 ]
 const easingOptions: Array<{ value: Easing; label: string }> = [
-  { value: 'linear', label: 'Linear' }, { value: 'ease-in', label: 'Ease in' }, { value: 'ease-out', label: 'Ease out' }, { value: 'ease-in-out', label: 'Ease in-out' }
+  { value: 'linear', label: 'Linear' }, { value: 'ease-in', label: 'Ease in' }, { value: 'ease-out', label: 'Ease out' }, { value: 'ease-in-out', label: 'Ease in-out' },
+  { value: 'back-in', label: 'Back in' }, { value: 'back-out', label: 'Overshoot' }, { value: 'back-in-out', label: 'Back in-out' }, { value: 'custom', label: 'Custom curve' }
 ]
 
 function set(patch: Partial<Transform>) {
@@ -77,6 +79,7 @@ function reset() {
     <UiField v-if="activeKeyframe" label="Easing" hint="Curve of the motion that arrives at this keyframe">
       <UiSelect :model-value="activeKeyframe.easing" :options="easingOptions" label="Keyframe easing" @update:model-value="value => editor.setKeyframeEasingAtPlayhead(value)" />
     </UiField>
+    <BezierEditor v-if="activeKeyframe?.easing === 'custom' && activeKeyframe.bezier" :model-value="activeKeyframe.bezier" @start="editor.beginChange()" @update:model-value="value => editor.setKeyframeEasingAtPlayhead('custom', value, false)" />
     <p class="text-2xs leading-4 text-faint">{{ animated ? 'Changes at the playhead are saved into a keyframe.' : 'Add a keyframe, move the playhead and change the transform to animate.' }}</p>
   </UiSection>
 </template>

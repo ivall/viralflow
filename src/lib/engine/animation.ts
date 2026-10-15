@@ -137,6 +137,45 @@ function outState(kind: AnimationOutKind, progress: number): MotionState {
   return s
 }
 
+/** `next` keeps the caption of `previous` on screen, only the highlighted word moved on. */
+function continuesCaption(previous: TimelineItem, next: TimelineItem) {
+  return previous !== next && previous.kind === 'text' && next.kind === 'text'
+    && (next.text?.highlightIndex ?? -1) > 0
+    && previous.text?.content === next.text?.content
+    && Math.abs(previous.start + previous.duration - next.start) < 0.02
+}
+
+/** Clips that show the same word-highlight caption, in order; just `item` for any other clip. */
+export function captionRun(item: TimelineItem, siblings: TimelineItem[]): TimelineItem[] {
+  if (item.kind !== 'text') return [item]
+  const run = [item]
+  while (true) {
+    const previous = siblings.find(candidate => continuesCaption(candidate, run[0]))
+    if (!previous) break
+    run.unshift(previous)
+  }
+  while (true) {
+    const next = siblings.find(candidate => continuesCaption(run.at(-1)!, candidate))
+    if (!next) break
+    run.push(next)
+  }
+  return run
+}
+
+export type MotionSpan = Pick<TimelineItem, 'start' | 'duration' | 'animIn' | 'animOut'>
+
+/**
+ * Time the in/out animations of a clip play over. A word-highlight caption is one
+ * clip per word, but it animates as one text: in on its first word, out on its last.
+ */
+export function motionSpan(item: TimelineItem, siblings: TimelineItem[]): MotionSpan {
+  const run = captionRun(item, siblings)
+  if (run.length === 1) return item
+  const first = run[0]
+  const last = run.at(-1)!
+  return { start: first.start, duration: last.start + last.duration - first.start, animIn: first.animIn, animOut: last.animOut }
+}
+
 /** Motion of a clip `elapsed` seconds after its start, caused by in/out animations. */
 export function resolveMotion(item: Pick<TimelineItem, 'duration' | 'animIn' | 'animOut'>, elapsed: number): MotionState {
   const { inKind, outKind, inDuration, outDuration } = animationWindows(item)

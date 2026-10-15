@@ -11,7 +11,8 @@ import { CAPTION_PRESET, TEXT_PRESETS } from '@/lib/project'
 import { formatSrt, parseSubtitles } from '@/lib/srt'
 import { captionCues, generateCaptions, speechSources } from '@/services/captions'
 import { errorMessage, ipc, onEvent, type WhisperModel } from '@/services/ipc'
-import { formatBytes } from '@/services/media'
+import { formatBytes, formatDuration } from '@/services/media'
+import type { Pace } from '@/lib/pace'
 import { useEditor } from '@/stores/editor'
 import { useSettings } from '@/stores/settings'
 import { useToasts } from '@/stores/toast'
@@ -28,7 +29,9 @@ const position = ref<'top' | 'middle' | 'bottom'>('bottom')
 const busy = ref(false)
 const models = ref<WhisperModel[]>([])
 const downloading = ref<{ received: number; total: number } | null>(null)
+const progress = ref<{ fraction: number; remaining: number } | null>(null)
 let unlisten: (() => void) | null = null
+let ticker: ReturnType<typeof setInterval> | null = null
 
 const sources = computed(() => speechSources().map(item => ({ value: item.id, label: `${item.name} (${item.start.toFixed(1)}s)` })))
 const cloud = computed(() => settings.value.transcriptionProvider === 'openrouter')
@@ -60,7 +63,10 @@ onMounted(async () => {
   })
 })
 
-onBeforeUnmount(() => unlisten?.())
+onBeforeUnmount(() => {
+  unlisten?.()
+  stopPace()
+})
 
 async function downloadModel() {
   if (!model.value) return
@@ -81,18 +87,34 @@ function captionStyle() {
   return { ...TEXT_PRESETS.find(entry => entry.id === preset.value)?.style, maxWidth: 80 }
 }
 
+function trackPace(pace: Pace) {
+  const tick = () => {
+    const now = performance.now() / 1000
+    progress.value = { fraction: pace.value(now), remaining: pace.remaining(now) }
+  }
+  tick()
+  ticker = setInterval(tick, 250)
+}
+
 async function generate() {
   if (!source.value) return
   busy.value = true
   try {
-    const result = await generateCaptions(source.value, { language: language.value, maxWords: maxWords.value, style: captionStyle(), y: position.value === 'top' ? 20 : position.value === 'middle' ? 50 : 74 })
+    const result = await generateCaptions(source.value, { language: language.value, maxWords: maxWords.value, style: captionStyle(), y: position.value === 'top' ? 20 : position.value === 'middle' ? 50 : 74, onPace: trackPace })
     if (!result.count) toasts.show('No speech was found in this clip')
     else toasts.success(`Added ${result.count} captions`, result.alignment === 'word' ? 'Timed word by word.' : 'Timed by sentence; adjust any caption on the timeline.')
   } catch (error) {
     toasts.error('Captions could not be created', errorMessage(error))
   } finally {
     busy.value = false
+    stopPace()
   }
+}
+
+function stopPace() {
+  if (ticker) clearInterval(ticker)
+  ticker = null
+  progress.value = null
 }
 
 async function importSubtitles() {
@@ -152,6 +174,13 @@ async function exportSubtitles() {
         <UiButton variant="primary" class="w-full" :disabled="!ready || busy || !source" @click="generate">
           <LoaderCircle v-if="busy" class="size-3.5 animate-spin" />{{ busy ? 'Listening…' : 'Generate captions' }}
         </UiButton>
+        <div v-if="busy && progress" class="space-y-1">
+          <div class="h-1.5 overflow-hidden rounded-full bg-line"><div class="h-full bg-accent" :style="{ width: `${(progress.fraction * 100).toFixed(1)}%` }" /></div>
+          <p class="flex justify-between text-2xs tabular-nums text-muted">
+            <span>{{ Math.round(progress.fraction * 100) }}%</span>
+            <span>{{ progress.remaining < 3 ? 'Almost done' : `About ${formatDuration(progress.remaining)} left` }}</span>
+          </p>
+        </div>
       </template>
       <p v-else class="text-2xs leading-4 text-muted">Add a video with sound or an audio clip to the timeline first.</p>
     </section>

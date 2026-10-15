@@ -27,6 +27,16 @@ pub struct Keyframe {
     pub time: f64,
     pub transform: Transform,
     pub easing: String,
+    /// Curve used when easing is "custom" (x1, y1, x2, y2). A Vec so a malformed
+    /// value only loses the curve instead of failing the whole document.
+    pub bezier: Option<Vec<f64>>,
+}
+
+impl Keyframe {
+    pub fn curve(&self) -> Option<[f64; 4]> {
+        let values: [f64; 4] = self.bezier.as_deref()?.try_into().ok()?;
+        values.iter().all(|value| value.is_finite()).then_some(values)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Default)]
@@ -100,10 +110,17 @@ impl Default for ShapeStyle {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct TextStyle {
     pub content: String,
+    pub highlight_index: i64,
+}
+
+impl Default for TextStyle {
+    fn default() -> Self {
+        TextStyle { content: String::new(), highlight_index: -1 }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -123,6 +140,8 @@ pub struct TimelineItem {
     pub muted: bool,
     pub fade_in: f64,
     pub fade_out: f64,
+    /// Voice cleanup strength, 0..1 (0 = off).
+    pub voice_enhance: f64,
     pub transform: Option<Transform>,
     pub keyframes: Vec<Keyframe>,
     pub fit: Option<String>,
@@ -196,11 +215,13 @@ pub struct ExportSettings {
     pub resolution: u32,
     pub fps: u32,
     pub hardware: bool,
+    /// Target loudness of the soundtrack in LUFS; None leaves the mix as it is.
+    pub loudness: Option<f64>,
 }
 
 impl Default for ExportSettings {
     fn default() -> Self {
-        ExportSettings { format: "mp4".into(), codec: "h264".into(), quality: "high".into(), resolution: 1080, fps: 30, hardware: false }
+        ExportSettings { format: "mp4".into(), codec: "h264".into(), quality: "high".into(), resolution: 1080, fps: 30, hardware: false, loudness: None }
     }
 }
 

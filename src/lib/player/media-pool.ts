@@ -1,3 +1,4 @@
+import { clamp } from '../engine/math'
 import { fadeGain, itemActiveAt, mediaTimeAt } from '../engine/scene'
 import type { MediaAsset, Project, TimelineItem, Track } from '../types'
 import { fileUrl } from '@/services/ipc'
@@ -15,6 +16,10 @@ const MAX_IDLE = 10
 interface Voice {
   element: HTMLMediaElement
   gain?: GainNode
+  /** Voice cleanup preview: rumble cut and compressor (the export also removes noise). */
+  highpass?: BiquadFilterNode
+  compressor?: DynamicsCompressorNode
+  enhance: number
   itemId: string
   src: string
   lastUsed: number
@@ -64,7 +69,7 @@ export class MediaPool {
       element.playsInline = true
       element.disablePictureInPicture = true
     }
-    const voice: Voice = { element, itemId, src, lastUsed: this.frameCounter, seeking: false, pendingTime: null }
+    const voice: Voice = { element, itemId, src, enhance: -1, lastUsed: this.frameCounter, seeking: false, pendingTime: null }
     element.addEventListener('seeked', () => {
       voice.seeking = false
       if (voice.pendingTime !== null) {
@@ -82,12 +87,29 @@ export class MediaPool {
     if (voice.gain || !this.context) return
     try {
       const source = this.context.createMediaElementSource(voice.element)
+      voice.highpass = this.context.createBiquadFilter()
+      voice.highpass.type = 'highpass'
+      voice.compressor = this.context.createDynamicsCompressor()
       voice.gain = this.context.createGain()
-      source.connect(voice.gain).connect(this.context.destination)
+      source.connect(voice.highpass).connect(voice.compressor).connect(voice.gain).connect(this.context.destination)
       voice.element.volume = 1
+      voice.enhance = -1
     } catch {
       // Already connected or not allowed: fall back to element volume.
     }
+  }
+
+  /** Same threshold and ratio curve as enhance_chain in src-tauri/src/render/audio.rs. */
+  private setEnhance(voice: Voice, amount: number) {
+    if (!voice.highpass || !voice.compressor || Math.abs(voice.enhance - amount) < 1e-6) return
+    voice.enhance = amount
+    const on = amount > 0
+    voice.highpass.frequency.value = on ? 80 : 10
+    voice.compressor.threshold.value = on ? 20 * Math.log10(0.5 - amount * 0.3) : 0
+    voice.compressor.ratio.value = on ? 2 + amount * 2 : 1
+    voice.compressor.knee.value = on ? 6 : 0
+    voice.compressor.attack.value = 0.015
+    voice.compressor.release.value = 0.12
   }
 
   private setGain(voice: Voice, value: number) {
@@ -111,7 +133,7 @@ export class MediaPool {
     voice.element.currentTime = time
   }
 
-  private syncVoice(voice: Voice, mediaTime: number, rate: number, shouldPlay: boolean, gain: number, fps: number) {
+  private syncVoice(voice: Voice, mediaTime: number, rate: number, shouldPlay: boolean, gain: number, fps: number, enhance: number) {
     const element = voice.element
     voice.lastUsed = this.frameCounter
     if (Math.abs(element.playbackRate - rate) > 1e-3) element.playbackRate = rate
@@ -124,6 +146,7 @@ export class MediaPool {
       if (Math.abs(element.currentTime - mediaTime) > 0.5 / fps) this.seekVoice(voice, mediaTime)
     }
     this.setGain(voice, gain)
+    this.setEnhance(voice, enhance)
   }
 
   video(itemId: string): HTMLVideoElement | null {
@@ -187,7 +210,7 @@ export class MediaPool {
     const active = itemActiveAt(item, time)
     const mediaTime = mediaTimeAt(item, Math.max(time, item.start), project.fps, asset.duration)
     const gain = asset.hasAudio === false ? 0 : this.itemGain(track, item, time)
-    this.syncVoice(voice, mediaTime, item.speed || 1, playing && active && visible, gain, project.fps)
+    this.syncVoice(voice, mediaTime, item.speed || 1, playing && active && visible, gain, project.fps, clamp(item.voiceEnhance ?? 0, 0, 1))
   }
 
   private syncAudio(project: Project, track: Track, item: TimelineItem, asset: MediaAsset, time: number, playing: boolean) {
@@ -200,7 +223,7 @@ export class MediaPool {
     }
     const active = itemActiveAt(item, time)
     const mediaTime = mediaTimeAt(item, Math.max(time, item.start), project.fps, asset.duration)
-    this.syncVoice(voice, mediaTime, item.speed || 1, playing && active, this.itemGain(track, item, time), project.fps)
+    this.syncVoice(voice, mediaTime, item.speed || 1, playing && active, this.itemGain(track, item, time), project.fps, clamp(item.voiceEnhance ?? 0, 0, 1))
   }
 
   private retire(map: Map<string, Voice>, wanted: Set<string>) {
@@ -216,6 +239,8 @@ export class MediaPool {
 
   private dispose(voice: Voice) {
     voice.element.pause()
+    voice.highpass?.disconnect()
+    voice.compressor?.disconnect()
     voice.gain?.disconnect()
     voice.element.removeAttribute('src')
     voice.element.load()

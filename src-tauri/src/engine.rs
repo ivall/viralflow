@@ -1,7 +1,7 @@
 //! Rust mirror of src/lib/engine/*.ts. Every formula here must match its
 //! TypeScript twin exactly so the exported file looks like the preview.
 
-use crate::model::{Adjust, Crop, Keyframe, MediaAsset, Point, Project, TimelineItem, Track, Transform};
+use crate::model::{Adjust, Animation, Crop, Keyframe, MediaAsset, Point, Project, TimelineItem, Track, Transform};
 
 pub const EPSILON: f64 = 1e-4;
 
@@ -32,8 +32,68 @@ pub fn ease_in_out_cubic(value: f64) -> f64 {
     }
 }
 
-pub fn apply_easing(progress: f64, easing: &str) -> f64 {
+pub type Bezier = [f64; 4];
+
+/// Mirror of EASING_CURVES in math.ts (only the curves applied as beziers).
+fn easing_curve(easing: &str) -> Option<Bezier> {
+    match easing {
+        "back-in" => Some([0.36, 0.0, 0.66, -0.56]),
+        "back-out" => Some([0.34, 1.56, 0.64, 1.0]),
+        "back-in-out" => Some([0.68, -0.6, 0.32, 1.6]),
+        _ => None,
+    }
+}
+
+/// Mirror of cubicBezier in math.ts, operation for operation.
+pub fn cubic_bezier(curve: Bezier, x: f64) -> f64 {
+    let curve = if curve.iter().all(|value| value.is_finite()) { curve } else { [0.25, 0.25, 0.75, 0.75] };
+    let (x1, y1, x2, y2) = (clamp(curve[0], 0.0, 1.0), clamp(curve[1], -1.0, 2.0), clamp(curve[2], 0.0, 1.0), clamp(curve[3], -1.0, 2.0));
+    let cx = 3.0 * x1;
+    let bx = 3.0 * (x2 - x1) - cx;
+    let ax = 1.0 - cx - bx;
+    let cy = 3.0 * y1;
+    let by = 3.0 * (y2 - y1) - cy;
+    let ay = 1.0 - cy - by;
+    let sample_x = |t: f64| ((ax * t + bx) * t + cx) * t;
+    let target = clamp(x, 0.0, 1.0);
+    let mut t = target;
+    let mut solved = false;
+    for _ in 0..8 {
+        let error = sample_x(t) - target;
+        if error.abs() < 1e-7 {
+            solved = true;
+            break;
+        }
+        let slope = (3.0 * ax * t + 2.0 * bx) * t + cx;
+        if slope.abs() < 1e-6 {
+            break;
+        }
+        t -= error / slope;
+    }
+    if !solved {
+        let (mut low, mut high) = (0.0, 1.0);
+        t = target;
+        for _ in 0..60 {
+            let value = sample_x(t);
+            if (value - target).abs() < 1e-7 {
+                break;
+            }
+            if target > value {
+                low = t;
+            } else {
+                high = t;
+            }
+            t = (high - low) / 2.0 + low;
+        }
+    }
+    ((ay * t + by) * t + cy) * t
+}
+
+pub fn apply_easing(progress: f64, easing: &str, bezier: Option<Bezier>) -> f64 {
     let v = clamp(progress, 0.0, 1.0);
+    if let Some(curve) = easing_curve(easing) {
+        return cubic_bezier(curve, v);
+    }
     match easing {
         "ease-in" => v * v,
         "ease-out" => 1.0 - (1.0 - v) * (1.0 - v),
@@ -44,6 +104,7 @@ pub fn apply_easing(progress: f64, easing: &str) -> f64 {
                 1.0 - (-2.0 * v + 2.0).powi(2) / 2.0
             }
         }
+        "custom" => bezier.map(|curve| cubic_bezier(curve, v)).unwrap_or(v),
         _ => v,
     }
 }
@@ -90,14 +151,15 @@ fn sorted_keyframes(item: &TimelineItem) -> Vec<Keyframe> {
     result
 }
 
-fn interpolate(left: Transform, right: Transform, progress: f64, easing: &str) -> Transform {
-    let t = apply_easing(progress, easing);
+fn interpolate(left: Transform, right: Transform, progress: f64, easing: &str, bezier: Option<Bezier>) -> Transform {
+    let t = apply_easing(progress, easing, bezier);
+    // Overshooting curves may carry scale and opacity past their keyframes.
     Transform {
         x: lerp(left.x, right.x, t),
         y: lerp(left.y, right.y, t),
-        scale: lerp(left.scale, right.scale, t),
+        scale: lerp(left.scale, right.scale, t).max(0.05),
         rotation: lerp(left.rotation, right.rotation, t),
-        opacity: lerp(left.opacity, right.opacity, t),
+        opacity: clamp(lerp(left.opacity, right.opacity, t), 0.0, 1.0),
     }
 }
 
@@ -119,7 +181,13 @@ pub fn resolve_transform(item: &TimelineItem, elapsed: f64) -> Transform {
         }
         let left = &keyframes[index - 1];
         let span = (right.time - left.time).max(EPSILON);
-        return interpolate(normalize_transform(Some(&left.transform)), normalize_transform(Some(&right.transform)), (time - left.time) / span, &right.easing);
+        return interpolate(
+            normalize_transform(Some(&left.transform)),
+            normalize_transform(Some(&right.transform)),
+            (time - left.time) / span,
+            &right.easing,
+            right.curve(),
+        );
     }
     normalize_transform(Some(&keyframes[keyframes.len() - 1].transform))
 }
@@ -255,14 +323,46 @@ fn out_state(kind: &str, progress: f64) -> Motion {
     s
 }
 
-pub fn resolve_motion(item: &TimelineItem, elapsed: f64) -> Motion {
-    let in_kind = item.anim_in.as_ref().map(|a| a.kind.as_str()).unwrap_or("none");
-    let out_kind = item.anim_out.as_ref().map(|a| a.kind.as_str()).unwrap_or("none");
-    let mut in_duration = if in_kind == "none" { 0.0 } else { item.anim_in.as_ref().map(|a| a.duration).unwrap_or(0.0).max(0.05) };
-    let mut out_duration = if out_kind == "none" { 0.0 } else { item.anim_out.as_ref().map(|a| a.duration).unwrap_or(0.0).max(0.05) };
+/// `next` keeps the caption of `previous` on screen, only the highlighted word moved on.
+fn continues_caption(previous: &TimelineItem, next: &TimelineItem) -> bool {
+    previous.id != next.id
+        && previous.kind == "text"
+        && next.kind == "text"
+        && next.text.as_ref().map(|text| text.highlight_index).unwrap_or(-1) > 0
+        && previous.text.as_ref().map(|text| &text.content) == next.text.as_ref().map(|text| &text.content)
+        && (previous.end() - next.start).abs() < 0.02
+}
+
+/// Time span the in/out animations of a clip play over. Mirror of `motionSpan`:
+/// a word-highlight caption is one clip per word but animates as one text.
+pub struct MotionSpan<'a> {
+    pub start: f64,
+    pub duration: f64,
+    pub anim_in: Option<&'a Animation>,
+    pub anim_out: Option<&'a Animation>,
+}
+
+pub fn motion_span<'a>(item: &'a TimelineItem, siblings: &'a [TimelineItem]) -> MotionSpan<'a> {
+    let (mut first, mut last) = (item, item);
+    if item.kind == "text" {
+        while let Some(previous) = siblings.iter().find(|candidate| continues_caption(candidate, first)) {
+            first = previous;
+        }
+        while let Some(next) = siblings.iter().find(|candidate| continues_caption(last, candidate)) {
+            last = next;
+        }
+    }
+    MotionSpan { start: first.start, duration: last.end() - first.start, anim_in: first.anim_in.as_ref(), anim_out: last.anim_out.as_ref() }
+}
+
+pub fn resolve_motion(span: &MotionSpan, elapsed: f64) -> Motion {
+    let in_kind = span.anim_in.map(|a| a.kind.as_str()).unwrap_or("none");
+    let out_kind = span.anim_out.map(|a| a.kind.as_str()).unwrap_or("none");
+    let mut in_duration = if in_kind == "none" { 0.0 } else { span.anim_in.map(|a| a.duration).unwrap_or(0.0).max(0.05) };
+    let mut out_duration = if out_kind == "none" { 0.0 } else { span.anim_out.map(|a| a.duration).unwrap_or(0.0).max(0.05) };
     let total = in_duration + out_duration;
-    if total > item.duration && total > 0.0 {
-        let ratio = item.duration / total;
+    if total > span.duration && total > 0.0 {
+        let ratio = span.duration / total;
         in_duration *= ratio;
         out_duration *= ratio;
     }
@@ -270,7 +370,7 @@ pub fn resolve_motion(item: &TimelineItem, elapsed: f64) -> Motion {
     if in_kind != "none" && elapsed < in_duration {
         state = combine(state, in_state(in_kind, elapsed / in_duration));
     }
-    let out_start = item.duration - out_duration;
+    let out_start = span.duration - out_duration;
     if out_kind != "none" && elapsed > out_start {
         state = combine(state, out_state(out_kind, (elapsed - out_start) / out_duration));
     }
@@ -765,7 +865,8 @@ pub fn build_layer(project: &Project, index: (usize, usize), time: f64, boxes: &
     let (box_w, box_h) = item_box(project, item, boxes)?;
     let elapsed = time - item.start;
     let transform = resolve_transform(item, elapsed);
-    let motion = resolve_motion(item, elapsed);
+    let span = motion_span(item, &project.tracks[index.0].items);
+    let motion = resolve_motion(&span, time - span.start);
     let effect = if item.kind == "shape" { EffectState::default() } else { resolve_item_effect(item, elapsed) };
     let transition = resolve_transition(connection, &item.id, time);
 

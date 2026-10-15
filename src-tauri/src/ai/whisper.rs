@@ -1,14 +1,14 @@
 //! Local speech recognition through FFmpeg's `whisper` filter (whisper.cpp).
 
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 
 use futures_util::StreamExt;
 use serde::Serialize;
 
 use crate::ai::captions::{align_tokens, TimedSegment};
 use crate::error::{AppError, AppResult};
-use crate::ffmpeg::{command, filter_path, stderr_tail, Tools};
+use crate::ffmpeg::{filter_path, Tools};
+use crate::media::run_with_progress;
 
 pub const MODELS: [(&str, &str, u64); 5] = [
     ("tiny", "Tiny - fastest, rough", 77_691_713),
@@ -90,6 +90,13 @@ fn language_code(language: &str) -> String {
     .into()
 }
 
+/// Progress of a transcription: pass 0 finds the sentences, pass 1 times the words.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct Progress {
+    pub pass: u8,
+    pub progress: f64,
+}
+
 struct Pass<'a> {
     tools: &'a Tools,
     model: &'a Path,
@@ -100,7 +107,7 @@ struct Pass<'a> {
     work_dir: &'a Path,
 }
 
-fn run_pass(pass: &Pass, tokens: bool) -> AppResult<Vec<TimedSegment>> {
+fn run_pass(pass: &Pass, tokens: bool, on_progress: &mut dyn FnMut(f64)) -> AppResult<Vec<TimedSegment>> {
     let Pass { tools, model, source, offset, duration, language, work_dir } = *pass;
     let output = work_dir.join(if tokens { "tokens.json" } else { "segments.json" });
     let _ = std::fs::remove_file(&output);
@@ -111,16 +118,26 @@ fn run_pass(pass: &Pass, tokens: bool) -> AppResult<Vec<TimedSegment>> {
         filter_path(&output),
         if tokens { ":max_len=1" } else { "" }
     );
-    let result = command(&tools.ffmpeg)
-        .args(["-hide_banner", "-loglevel", "error", "-ss", &format!("{:.3}", offset.max(0.0)), "-t", &format!("{:.3}", duration.max(0.1)), "-i"])
-        .arg(source)
-        .args(["-vn", "-af", &filter, "-f", "null", "-"])
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .output()?;
-    if !result.status.success() {
-        return Err(AppError::msg(format!("Speech recognition failed: {}", stderr_tail(&result.stderr))));
-    }
+    let duration = duration.max(0.1);
+    let args: Vec<String> = vec![
+        "-ss".into(),
+        format!("{:.3}", offset.max(0.0)),
+        "-t".into(),
+        format!("{duration:.3}"),
+        "-i".into(),
+        source.display().to_string(),
+        "-vn".into(),
+        "-af".into(),
+        filter,
+        "-f".into(),
+        "null".into(),
+        "-".into(),
+    ];
+    // Whisper works on 20 s chunks, so progress arrives in jumps; the UI smooths it.
+    run_with_progress(tools, &args, duration, &mut *on_progress, &|| false).map_err(|error| match error {
+        AppError::Message(message) => AppError::msg(message.replacen("FFmpeg failed:", "Speech recognition failed:", 1)),
+        other => other,
+    })?;
     let text = std::fs::read_to_string(&output).unwrap_or_default();
     let mut segments = Vec::new();
     for line in text.lines().filter(|line| !line.trim().is_empty()) {
@@ -141,6 +158,7 @@ fn run_pass(pass: &Pass, tokens: bool) -> AppResult<Vec<TimedSegment>> {
 }
 
 /// Returns (segments, word timings when available) relative to `offset`.
+#[allow(clippy::too_many_arguments)]
 pub fn transcribe(
     tools: &Tools,
     model: &Path,
@@ -149,17 +167,18 @@ pub fn transcribe(
     duration: f64,
     language: &str,
     work_dir: &Path,
+    on_progress: &mut dyn FnMut(Progress),
 ) -> AppResult<(Vec<TimedSegment>, Option<Vec<crate::ai::captions::TimedWord>>)> {
     if !model.is_file() {
         return Err(AppError::msg("The speech model is not installed. Download it in Settings → Captions."));
     }
     std::fs::create_dir_all(work_dir)?;
     let pass = Pass { tools, model, source, offset, duration, language, work_dir };
-    let segments = run_pass(&pass, false)?;
+    let segments = run_pass(&pass, false, &mut |value| on_progress(Progress { pass: 0, progress: value }))?;
     if segments.is_empty() {
         return Ok((segments, None));
     }
-    let tokens = run_pass(&pass, true).unwrap_or_default();
+    let tokens = run_pass(&pass, true, &mut |value| on_progress(Progress { pass: 1, progress: value })).unwrap_or_default();
     let words = align_tokens(&segments, &tokens);
     Ok((segments, words))
 }
