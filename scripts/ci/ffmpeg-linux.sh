@@ -30,6 +30,8 @@ fi
 
 if [ -n "${GITHUB_ENV:-}" ]; then
   {
+    # .cargo/config.toml points LIBCLANG_PATH at the Windows LLVM folder.
+    echo "LIBCLANG_PATH=$(bash "$(dirname "$0")/../libclang-path.sh")"
     echo "FFMPEG_DIR=$dir"
     echo "PKG_CONFIG_PATH=$dir/lib/pkgconfig"
     echo "LD_LIBRARY_PATH=$dir/lib"

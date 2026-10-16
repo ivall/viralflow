@@ -13,6 +13,8 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
 export FFMPEG_DIR="${FFMPEG_DIR:-$(brew --prefix ffmpeg@8)}"
 export PKG_CONFIG_PATH="$FFMPEG_DIR/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+# Otherwise .cargo/config.toml's Windows default applies.
+export LIBCLANG_PATH="${LIBCLANG_PATH:-$(bash scripts/libclang-path.sh)}"
 version="$(grep -m1 '^version = ' Cargo.toml | sed -E 's/version = "(.*)"/\1/')"
 arch="$(uname -m)"
 [ "$arch" = "x86_64" ] || arch="arm64"

@@ -3,8 +3,7 @@
 | System | File |
 | --- | --- |
 | Windows 10/11 (x64) | `ViralFlow-*-setup.exe` (installer) or `ViralFlow-*-windows-x64.zip` (portable) |
-| macOS, Apple silicon | `ViralFlow-*-macos-arm64.dmg` |
-| macOS, Intel | `ViralFlow-*-macos-x86_64.dmg` |
+| macOS, Apple silicon (M1 and newer) | `ViralFlow-*-macos-arm64.dmg` |
 | Linux x64 | `ViralFlow-*-linux-x86_64.AppImage` or `.tar.gz` |
 | Linux arm64 | `ViralFlow-*-linux-aarch64.AppImage` or `.tar.gz` |
 

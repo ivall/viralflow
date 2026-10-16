@@ -1,6 +1,6 @@
 # Builds the installers for Windows (setup .exe and portable .zip), Linux
 # (AppImage and .tar.gz, x64 and arm64) and macOS (.dmg and .zip, Apple
-# silicon and Intel), then attaches them to a draft GitHub release. Runs when a
+# silicon), then attaches them to a draft GitHub release. Runs when a
 # version tag is pushed (git tag v1.0.0 && git push origin v1.0.0) or by hand.
 name: Release
 
@@ -103,15 +103,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Apple silicon only: Homebrew has no Intel builds of ffmpeg@8 (it would
+        # compile FFmpeg and its libraries from source for hours).
         include:
           - { arch: arm64, runner: macos-15 }
-          - { arch: x64, runner: macos-15-intel }
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
 
+      # The runner's formula list is not updated by itself, and ffmpeg@8 is newer than it.
       - name: FFmpeg and tools
-        run: brew install ffmpeg@8 dylibbundler pkg-config
+        run: |
+          brew update --quiet
+          brew install ffmpeg@8 dylibbundler pkg-config
+          "$(brew --prefix ffmpeg@8)/bin/ffmpeg" -hide_banner -version | head -n 1
+          echo "LIBCLANG_PATH=$(bash scripts/libclang-path.sh)" >> "$GITHUB_ENV"
 
       - uses: dtolnay/rust-toolchain@stable
 

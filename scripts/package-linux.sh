@@ -18,6 +18,8 @@ dist="$root/dist"
 target="${CARGO_TARGET_DIR:-$root/target}"
 
 export PKG_CONFIG_PATH="$FFMPEG_DIR/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+# Otherwise .cargo/config.toml's Windows default applies.
+export LIBCLANG_PATH="${LIBCLANG_PATH:-$(bash scripts/libclang-path.sh)}"
 # The executable finds the bundled libraries in ../lib (AppImage, tarball).
 export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-Wl,-rpath,\$ORIGIN/../lib"
 cargo build --release -p viralflow

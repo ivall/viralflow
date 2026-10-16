@@ -93,11 +93,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # The runner's formula list is not updated by itself, and ffmpeg@8 is newer than it.
       - name: FFmpeg
         run: |
+          brew update --quiet
           brew install ffmpeg@8 pkg-config
           prefix="$(brew --prefix ffmpeg@8)"
+          "$prefix/bin/ffmpeg" -hide_banner -version | head -n 1
           echo "FFMPEG_DIR=$prefix" >> "$GITHUB_ENV"
+          echo "LIBCLANG_PATH=$(bash scripts/libclang-path.sh)" >> "$GITHUB_ENV"
           echo "PKG_CONFIG_PATH=$prefix/lib/pkgconfig" >> "$GITHUB_ENV"
           echo "$prefix/bin" >> "$GITHUB_PATH"
 

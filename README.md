@@ -55,7 +55,7 @@ included everywhere, nothing else to install.
 | System | Download |
 | --- | --- |
 | Windows 10/11 | `ViralFlow-…-setup.exe` (installer) or the portable `.zip` |
-| macOS (Apple silicon / Intel) | `ViralFlow-…-macos-arm64.dmg` / `-x86_64.dmg` |
+| macOS (Apple silicon) | `ViralFlow-…-macos-arm64.dmg` |
 | Linux (x64 / arm64) | `ViralFlow-…-linux-x86_64.AppImage` (`chmod +x`, run) or the `.tar.gz` |
 
 Builds aren't code-signed yet: Windows SmartScreen may ask for confirmation, and on macOS open the
@@ -103,12 +103,16 @@ cargo run -p viralflow
 pwsh scripts/package.ps1              # .zip and (with Inno Setup 6) the installer in dist/
 ```
 
+On Linux and macOS set `LIBCLANG_PATH` as below: `.cargo/config.toml` defaults it to the Windows
+LLVM folder (the packaging scripts find libclang themselves).
+
 **Linux** (Ubuntu/Debian package names):
 
 ```sh
 sudo apt install clang libclang-dev pkg-config libxkbcommon-dev libfontconfig1-dev libasound2-dev libdbus-1-dev libwayland-dev
 bash scripts/ci/ffmpeg-linux.sh       # FFmpeg 8 shared build into ./ffmpeg-download
 export FFMPEG_DIR=$PWD/ffmpeg-download PKG_CONFIG_PATH=$PWD/ffmpeg-download/lib/pkgconfig LD_LIBRARY_PATH=$PWD/ffmpeg-download/lib
+export LIBCLANG_PATH=$(bash scripts/libclang-path.sh)
 cargo run -p viralflow
 bash scripts/package-linux.sh         # AppImage and .tar.gz in dist/
 ```
@@ -118,6 +122,7 @@ bash scripts/package-linux.sh         # AppImage and .tar.gz in dist/
 ```sh
 brew install ffmpeg@8 pkg-config dylibbundler
 export FFMPEG_DIR=$(brew --prefix ffmpeg@8) PKG_CONFIG_PATH=$(brew --prefix ffmpeg@8)/lib/pkgconfig
+export LIBCLANG_PATH=$(bash scripts/libclang-path.sh)
 cargo run -p viralflow
 bash scripts/package-macos.sh         # .dmg and .zip in dist/
 ```
