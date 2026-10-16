@@ -1315,6 +1315,13 @@ fn undo_groups_continuous_edits() {
 
 #[test]
 fn ui_scenarios() {
+    // The editor renders with the GPU. Without one (and no software driver
+    // such as lavapipe) the scenarios are skipped, except on CI where they must run.
+    if let Err(error) = vf_render::Gpu::new() {
+        assert!(std::env::var_os("CI").is_none(), "UI scenarios need a GPU or a software Vulkan driver: {error}");
+        println!("UI scenarios skipped: {error}");
+        return;
+    }
     i_slint_backend_testing::init_integration_test_with_mock_time();
     export_button_reacts_without_dragging_the_window();
     more_menu_reports_the_entry();

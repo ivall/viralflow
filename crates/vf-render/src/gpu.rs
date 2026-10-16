@@ -20,13 +20,19 @@ impl Gpu {
         // platform's native API: DX12 on Windows, Metal on macOS, Vulkan elsewhere.
         descriptor.backends = native_backend();
         let instance = wgpu::Instance::new(descriptor);
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            force_fallback_adapter: false,
-            compatible_surface: None,
-            ..Default::default()
-        }))
-        .map_err(|error| Error::msg(format!("No graphics adapter is available: {error}")))?;
+        let request = |fallback: bool| {
+            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                force_fallback_adapter: fallback,
+                compatible_surface: None,
+                ..Default::default()
+            }))
+        };
+        // Without a usable GPU (virtual machines, servers), a software one:
+        // WARP on Windows, lavapipe (Mesa) on Linux.
+        let adapter = request(false).or_else(|_| request(true)).map_err(|error| {
+            Error::msg(format!("No graphics adapter is available: {error}. On Linux, install the Vulkan driver for your GPU (or mesa-vulkan-drivers)."))
+        })?;
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("ViralFlow"),
             required_features: wgpu::Features::empty(),

@@ -65,10 +65,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # mesa-vulkan-drivers: lavapipe, a software Vulkan GPU for the rendering and UI tests.
       - name: System packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang libclang-dev pkg-config libxkbcommon-dev libfontconfig1-dev libasound2-dev libdbus-1-dev libwayland-dev
+          sudo apt-get install -y clang libclang-dev pkg-config libxkbcommon-dev libfontconfig1-dev libasound2-dev libdbus-1-dev libwayland-dev mesa-vulkan-drivers
 
       - name: FFmpeg
         env:
