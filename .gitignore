@@ -1,20 +1,9 @@
-# Dependencies
-node_modules/
-
 # Build output
-dist/
-dist-ssr/
-src-tauri/target/
-src-tauri/gen/schemas/
-*.tsbuildinfo
-.vite/
-coverage/
+/target/
+/dist/
 
 # Logs
 *.log
-npm-debug.log*
-yarn-debug.log*
-pnpm-debug.log*
 
 # Environment and secrets
 .env
@@ -43,5 +32,6 @@ desktop.ini
 *.mp3
 *.wav
 *.m4a
-!src-tauri/assets/*.mp3
+!assets/sounds/*.mp3
 ggml-*.bin
+.legacy/

@@ -1,0 +1,101 @@
+// Keyboard shortcuts of the editor.
+
+import { Theme, Platform } from "../theme.slint";
+import { Dialog } from "../widgets.slint";
+
+struct Shortcut {
+    keys: string,
+    action: string,
+}
+
+struct ShortcutGroup {
+    title: string,
+    items: [Shortcut],
+}
+
+component Keys inherits Rectangle {
+    in property <string> keys;
+    width: keys-text.preferred-width + 12px;
+    height: 22px;
+    border-radius: 5px;
+    border-width: 1px;
+    border-color: Theme.line-strong;
+    background: Theme.raised;
+    keys-text := Text { text: root.keys; color: Theme.fg; font-size: 11px; font-weight: 500; }
+}
+
+export component ShortcutsDialog inherits Dialog {
+    title: "Keyboard shortcuts";
+    card-width: 720px;
+    property <[ShortcutGroup]> groups: [
+        {
+            title: "Playback",
+            items: [
+                { keys: "Space", action: "Play / pause" },
+                { keys: "← / →", action: "Previous / next frame" },
+                { keys: "Shift + ← / →", action: "Back / forward 1 second" },
+                { keys: "Home / End", action: "Go to start / end" },
+            ],
+        },
+        {
+            title: "Editing",
+            items: [
+                { keys: ("S  or  " + Platform.mod + " + B"), action: "Split at playhead" },
+                { keys: "Q / W", action: "Trim start / end to playhead" },
+                { keys: "Delete", action: "Delete selection" },
+                { keys: "Shift + Delete", action: "Delete and close the gap" },
+                { keys: (Platform.mod + " + D"), action: "Duplicate" },
+                { keys: (Platform.mod + " + C / X / V"), action: "Copy / cut / paste at playhead" },
+                { keys: "Alt + ← / →", action: "Nudge selection by one frame" },
+                { keys: (Platform.mod + " + G / " + Platform.mod + " + Shift + G"), action: "Group / ungroup" },
+                { keys: "H", action: "Hide / show clip" },
+                { keys: (Platform.mod + " + A"), action: "Select all" },
+                { keys: "Esc", action: "Clear selection" },
+            ],
+        },
+        {
+            title: "Keyframes",
+            items: [
+                { keys: "K", action: "Add / remove keyframe" },
+                { keys: "Shift + K / Alt + K", action: "Previous / next keyframe" },
+            ],
+        },
+        {
+            title: "Project",
+            items: [
+                { keys: (Platform.mod + " + Z"), action: "Undo" },
+                { keys: (Platform.mod + " + Shift + Z  or  " + Platform.mod + " + Y"), action: "Redo" },
+                { keys: (Platform.mod + " + I"), action: "Import media" },
+                { keys: (Platform.mod + " + S"), action: "Save" },
+                { keys: (Platform.mod + " + E"), action: "Export" },
+                { keys: "= / −", action: "Zoom timeline in / out" },
+                { keys: "Shift + Z", action: "Fit timeline" },
+                { keys: (Platform.mod + " + scroll"), action: "Zoom timeline at the pointer" },
+                { keys: "?", action: "Show this list" },
+            ],
+        },
+    ];
+
+    // Two balanced columns: Playback, Keyframes and Project | Editing.
+    property <[[ShortcutGroup]]> columns: [[root.groups[0], root.groups[2], root.groups[3]], [root.groups[1]]];
+
+    HorizontalLayout {
+        padding: 20px;
+        spacing: 32px;
+        for column in root.columns: VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: start;
+            spacing: 18px;
+            for group in column: VerticalLayout {
+                spacing: 4px;
+                Text { text: group.title; color: Theme.muted; font-size: Theme.text-2xs; font-weight: 600; }
+                for item in group.items: HorizontalLayout {
+                    height: 26px;
+                    spacing: 12px;
+                    Text { horizontal-stretch: 1; text: item.action; color: Theme.fg; font-size: Theme.text-xs; vertical-alignment: center; overflow: elide; }
+                    VerticalLayout { alignment: center; Keys { keys: item.keys; } }
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,46 @@
+[workspace]
+resolver = "2"
+members = ["crates/*", "app"]
+
+[workspace.package]
+version = "1.0.0"
+edition = "2021"
+license = "GPL-3.0-only"
+repository = "https://github.com/ivall/viralflow"
+rust-version = "1.85"
+
+[workspace.dependencies]
+vf-core = { path = "crates/vf-core" }
+vf-media = { path = "crates/vf-media" }
+vf-render = { path = "crates/vf-render" }
+vf-audio = { path = "crates/vf-audio" }
+vf-ai = { path = "crates/vf-ai" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+log = "0.4"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+rayon = "1"
+parking_lot = "0.12"
+crossbeam-channel = "0.5"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "unwind"
+strip = true
+
+# Media and rendering code is far too slow unoptimised to debug the app with.
+[profile.dev.package."*"]
+opt-level = 3
+
+# wgpu-core's lock tracing (debug assertions only) touches thread-local storage
+# while Slint drops the shared queue at thread exit, which panics.
+[profile.dev.package.wgpu-core]
+debug-assertions = false
+
+# ffmpeg-next 9 with fallbacks for enum values added by newer FFmpeg builds.
+[patch.crates-io]
+ffmpeg-next = { path = "vendor/ffmpeg-next" }

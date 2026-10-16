@@ -1,0 +1,256 @@
+// Colour field with a saturation/value square, hue bar and hex input, and a
+// searchable font list that previews each family in its own face.
+
+import { Theme, Icons } from "theme.slint";
+import { Icon, TextField } from "widgets.slint";
+
+export component ColorField inherits Rectangle {
+    in property <color> value;
+    in property <string> hex;
+    callback started();
+    /// Live change while dragging in the picker.
+    callback picked(color);
+    /// A typed hex value (Rust validates it).
+    callback hex-entered(string);
+
+    property <float> hue: root.value.to-hsv().hue;
+    property <float> sat: root.value.to-hsv().saturation;
+    property <float> val: root.value.to-hsv().value;
+    // While dragging the hue stays put even for greys (where it is undefined).
+    property <float> drag-hue: -1;
+
+    height: 32px;
+    border-radius: Theme.radius;
+    border-width: 1px;
+    border-color: hex-input.has-focus ? Theme.accent : Theme.line;
+    background: Theme.raised;
+
+    HorizontalLayout {
+        padding-left: 4px;
+        padding-right: 8px;
+        spacing: 8px;
+        VerticalLayout {
+            alignment: center;
+            swatch := Rectangle {
+                width: 22px;
+                height: 22px;
+                border-radius: 4px;
+                border-width: 1px;
+                border-color: #ffffff1a;
+                background: root.value;
+                TouchArea {
+                    clicked => {
+                        root.drag-hue = root.hue;
+                        root.started();
+                        popup.show();
+                    }
+                }
+            }
+        }
+        hex-input := TextInput {
+            horizontal-stretch: 1;
+            text: root.hex;
+            color: Theme.fg;
+            font-size: Theme.text-xs;
+            vertical-alignment: center;
+            single-line: true;
+            selection-background-color: Theme.accent.with-alpha(0.35);
+            accepted => { root.hex-entered(self.text); self.clear-focus(); }
+            changed has-focus => {
+                if !self.has-focus && self.text != root.hex { root.hex-entered(self.text); }
+            }
+        }
+    }
+
+    popup := PopupWindow {
+        x: 0;
+        y: root.height + 4px;
+        width: 232px;
+        close-policy: close-on-click-outside;
+        Rectangle {
+            border-radius: 12px;
+            border-width: 1px;
+            border-color: Theme.line-strong;
+            background: Theme.raised;
+            drop-shadow-blur: 24px;
+            drop-shadow-color: #00000080;
+            VerticalLayout {
+                padding: 12px;
+                spacing: 10px;
+                square := Rectangle {
+                    height: 140px;
+                    border-radius: 6px;
+                    clip: true;
+                    background: hsv(root.drag-hue >= 0 ? root.drag-hue : root.hue, 1, 1);
+                    Rectangle { background: @linear-gradient(90deg, #ffffff 0%, #ffffff00 100%); }
+                    Rectangle { background: @linear-gradient(180deg, #00000000 0%, #000000 100%); }
+                    Rectangle {
+                        x: root.sat * parent.width - 7px;
+                        y: (1 - root.val) * parent.height - 7px;
+                        width: 14px;
+                        height: 14px;
+                        border-radius: 7px;
+                        border-width: 2px;
+                        border-color: #ffffff;
+                        drop-shadow-blur: 3px;
+                        drop-shadow-color: #00000099;
+                    }
+                    TouchArea {
+                        function pick(x: length, y: length) {
+                            let s = max(0, min(1, x / parent.width));
+                            let v = max(0, min(1, 1 - y / parent.height));
+                            root.picked(hsv(root.drag-hue >= 0 ? root.drag-hue : root.hue, s, v));
+                        }
+                        pointer-event(event) => {
+                            if event.kind == PointerEventKind.down { self.pick(self.mouse-x, self.mouse-y); }
+                        }
+                        moved => { if self.pressed { self.pick(self.mouse-x, self.mouse-y); } }
+                    }
+                }
+                hue-bar := Rectangle {
+                    height: 12px;
+                    border-radius: 6px;
+                    background: @linear-gradient(90deg, #ff0000 0%, #ffff00 16.7%, #00ff00 33.3%, #00ffff 50%, #0000ff 66.7%, #ff00ff 83.3%, #ff0000 100%);
+                    Rectangle {
+                        x: (root.drag-hue >= 0 ? root.drag-hue : root.hue) / 360 * parent.width - 7px;
+                        y: -1px;
+                        width: 14px;
+                        height: 14px;
+                        border-radius: 7px;
+                        border-width: 2px;
+                        border-color: #ffffff;
+                        background: hsv(root.drag-hue >= 0 ? root.drag-hue : root.hue, 1, 1);
+                    }
+                    TouchArea {
+                        function pick(x: length) {
+                            root.drag-hue = max(0, min(359.9, x / parent.width * 360));
+                            root.picked(hsv(root.drag-hue, max(root.sat, 0.01), max(root.val, 0.01)));
+                        }
+                        pointer-event(event) => {
+                            if event.kind == PointerEventKind.down { self.pick(self.mouse-x); }
+                        }
+                        moved => { if self.pressed { self.pick(self.mouse-x); } }
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 6px;
+                    for tone in [#ffffff, #000000, #ffe14d, #ff4fa3, #4ef08a, #6b97e8, #7c3aed, #ef3340]: Rectangle {
+                        width: 20px;
+                        height: 20px;
+                        border-radius: 4px;
+                        border-width: 1px;
+                        border-color: #ffffff26;
+                        background: tone;
+                        TouchArea {
+                            clicked => {
+                                root.drag-hue = tone.to-hsv().hue;
+                                root.picked(tone);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component FontPicker inherits Rectangle {
+    in property <string> current;
+    in property <[string]> families;
+    callback chosen(string);
+    /// Whether a family matches the search query (Slint strings have no `contains`).
+    pure callback matches(string, string) -> bool;
+    property <string> query;
+
+    height: 32px;
+    border-radius: Theme.radius;
+    border-width: 1px;
+    border-color: trigger.has-hover ? Theme.line-strong : Theme.line;
+    background: Theme.raised;
+    trigger := TouchArea {
+        clicked => {
+            root.query = "";
+            popup.show();
+        }
+    }
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 8px;
+        Text {
+            horizontal-stretch: 1;
+            text: root.current;
+            font-family: root.current;
+            color: Theme.fg;
+            font-size: Theme.text-sm;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        VerticalLayout { alignment: center; Icon { source: Icons.chevron-down; size: 14px; colorize: Theme.muted; } }
+    }
+    popup := PopupWindow {
+        x: 0;
+        y: root.height + 4px;
+        width: max(root.width, 240px);
+        // Without a height the popup takes the whole list's preferred height
+        // (thousands of pixels) and centres the box in it, off the screen.
+        height: 360px;
+        close-policy: close-on-click-outside;
+        Rectangle {
+            border-radius: 12px;
+            border-width: 1px;
+            border-color: Theme.line-strong;
+            background: Theme.raised;
+            drop-shadow-blur: 24px;
+            drop-shadow-color: #00000080;
+            VerticalLayout {
+                padding: 6px;
+                spacing: 4px;
+                search := TextField {
+                    icon: Icons.search;
+                    placeholder: "Search fonts";
+                    edited(value) => { root.query = value; }
+                    init => { self.focus-input(); }
+                }
+                Flickable {
+                    vertical-stretch: 1;
+                    content-height: list.preferred-height;
+                    list := VerticalLayout {
+                        for family in root.families: Rectangle {
+                            property <bool> matches: root.query == "" || root.matches(family, root.query);
+                            visible: self.matches;
+                            height: self.matches ? 34px : 0px;
+                            border-radius: 6px;
+                            background: font-touch.has-hover ? Theme.hover : transparent;
+                            HorizontalLayout {
+                                padding-left: 8px;
+                                spacing: 6px;
+                                VerticalLayout {
+                                    alignment: center;
+                                    width: 14px;
+                                    if family == root.current: Icon { source: Icons.check; size: 14px; colorize: Theme.accent; }
+                                }
+                                Text {
+                                    text: family;
+                                    font-family: family;
+                                    font-size: Theme.text-sm;
+                                    color: Theme.fg;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
+                            }
+                            accessible-role: list-item;
+                            accessible-label: family;
+                            font-touch := TouchArea {
+                                clicked => {
+                                    root.chosen(family);
+                                    popup.close();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

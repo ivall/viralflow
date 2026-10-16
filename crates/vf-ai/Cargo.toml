@@ -1,0 +1,16 @@
+[package]
+name = "vf-ai"
+description = "ViralFlow speech recognition (whisper.cpp through libavfilter) and caption timing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+vf-core.workspace = true
+vf-media.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+log.workspace = true
+ureq = { version = "3", features = ["json"] }
+base64 = "0.22"

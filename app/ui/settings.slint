@@ -1,0 +1,435 @@
+// The settings page.
+
+import { Theme, Icons } from "theme.slint";
+import { Button, ButtonKind, ButtonSize, Switch, Select, Segmented, Choice, Icon, TextField, Dialog, ScrollView, Spinner } from "widgets.slint";
+
+export struct SpeechModel {
+    id: string,
+    label: string,
+    size: string,
+    installed: bool,
+    downloading: bool,
+    fraction: float,
+}
+
+export struct ModelRow {
+    id: string,
+    name: string,
+    prices: string,
+    vision: bool,
+}
+
+export global SettingsState {
+    in property <bool> autosave;
+    in property <bool> snap;
+    in property <bool> safe-area;
+    in property <string> default-fps;
+    in property <string> default-aspect;
+    in property <[Choice]> aspects;
+    in property <string> engine;
+    in property <string> engine-detail;
+    in property <string> provider;
+    in property <string> language;
+    in property <[SpeechModel]> speech-models;
+    in property <string> whisper-model;
+    in property <bool> downloading;
+    in property <bool> has-key;
+    in property <string> key-hint;
+    in property <bool> key-in-file;
+    in property <string> ai-model;
+    in property <string> transcription-model;
+    in property <string> export-folder;
+    in property <bool> hardware;
+    // Model picker
+    in property <bool> picker-open;
+    in property <bool> picker-speech;
+    in property <bool> picker-loading;
+    in property <string> picker-error;
+    in property <[ModelRow]> picker-rows;
+    in-out property <string> picker-query;
+    in property <string> picker-sort: "newest";
+    in property <bool> picker-vision;
+    in property <bool> picker-free;
+
+    /// The page became visible (refresh what it shows).
+    callback shown();
+    callback toggle(string);
+    callback choose(string, string);
+    callback save-key(string);
+    callback download(string);
+    callback choose-folder();
+    callback open-picker(bool);
+    callback picker-changed();
+    callback picker-filter(string, string);
+    callback pick(string);
+    callback close-picker();
+}
+
+component Group inherits Rectangle {
+    in property <string> title;
+    VerticalLayout {
+        spacing: 12px;
+        Text { text: root.title; color: Theme.fg; font-size: Theme.text-sm; font-weight: 600; }
+        Rectangle {
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Theme.line;
+            background: Theme.panel;
+            height: rows.preferred-height;
+            rows := VerticalLayout {
+                @children
+            }
+        }
+    }
+}
+
+component Row inherits Rectangle {
+    in property <string> title;
+    in property <string> detail;
+    in property <bool> last;
+    min-height: 52px;
+    HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        padding-top: 10px;
+        padding-bottom: 10px;
+        spacing: 16px;
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 2px;
+            Text { text: root.title; color: Theme.fg; font-size: Theme.text-xs; font-weight: 500; }
+            if root.detail != "": Text { text: root.detail; color: Theme.muted; font-size: Theme.text-2xs; wrap: word-wrap; }
+        }
+        HorizontalLayout {
+            alignment: end;
+            VerticalLayout {
+                alignment: center;
+                @children
+            }
+        }
+    }
+    if !root.last: Rectangle { y: parent.height - 1px; height: 1px; background: Theme.line; }
+}
+
+component ModelButton inherits Rectangle {
+    in property <string> model;
+    callback clicked();
+    height: 32px;
+    border-radius: Theme.radius;
+    border-width: 1px;
+    border-color: touch.has-hover ? Theme.line-strong : Theme.line;
+    background: Theme.raised;
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 8px;
+        Text { horizontal-stretch: 1; text: root.model != "" ? root.model : "Choose a model"; color: Theme.fg; font-size: Theme.text-xs; vertical-alignment: center; overflow: elide; }
+        VerticalLayout { alignment: center; Icon { source: Icons.search; size: 14px; colorize: Theme.muted; } }
+    }
+    touch := TouchArea { clicked => { root.clicked(); } }
+}
+
+component Chip inherits Rectangle {
+    in property <string> label;
+    in property <bool> on;
+    callback toggled();
+    width: chip-text.preferred-width + 20px;
+    height: 28px;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: root.on ? Theme.accent : Theme.line;
+    background: root.on ? Theme.accent.with-alpha(0.1) : transparent;
+    chip-text := Text { text: root.label; color: root.on || chip-touch.has-hover ? Theme.fg : Theme.muted; font-size: Theme.text-2xs; }
+    chip-touch := TouchArea { clicked => { root.toggled(); } }
+}
+
+component ModelPicker inherits Dialog {
+    title: SettingsState.picker-speech ? "Choose a speech-to-text model" : "Choose an AI model";
+    description: SettingsState.picker-speech
+        ? "Models that turn speech into text. Word timing depends on the model; Whisper models return it reliably."
+        : "Prices are per million tokens (input / output). Photo matching needs a model that understands images.";
+    card-width: 760px;
+    dismissed => { SettingsState.close-picker(); }
+    VerticalLayout {
+        padding-left: 20px;
+        padding-right: 20px;
+        padding-top: 16px;
+        spacing: 10px;
+        TextField {
+            icon: Icons.search;
+            placeholder: SettingsState.picker-speech ? "Search, e.g. whisper" : "Search by name or id";
+            text: SettingsState.picker-query;
+            edited(value) => { SettingsState.picker-query = value; SettingsState.picker-changed(); }
+            accepted(value) => { if SettingsState.picker-rows.length > 0 { SettingsState.pick(SettingsState.picker-rows[0].id); } else if value != "" { SettingsState.pick(value); } }
+            init => { self.focus-input(); }
+        }
+        HorizontalLayout {
+            spacing: 6px;
+            if !SettingsState.picker-speech: Chip { label: "Images"; on: SettingsState.picker-vision; toggled => { SettingsState.picker-filter("vision", ""); } }
+            if !SettingsState.picker-speech: Chip { label: "Free"; on: SettingsState.picker-free; toggled => { SettingsState.picker-filter("free", ""); } }
+            Rectangle { horizontal-stretch: 1; }
+            VerticalLayout { alignment: center; Text { text: SettingsState.picker-rows.length + (SettingsState.picker-rows.length == 1 ? " model" : " models"); color: Theme.faint; font-size: Theme.text-2xs; } }
+            Segmented {
+                width: 220px;
+                current: SettingsState.picker-sort;
+                options: SettingsState.picker-speech ? [{ value: "newest", label: "Newest" }, { value: "name", label: "Name" }] : [{ value: "newest", label: "Newest" }, { value: "cheapest", label: "Cheapest" }, { value: "name", label: "Name" }];
+                selected(value) => { SettingsState.picker-filter("sort", value); }
+            }
+        }
+    }
+    Rectangle {
+        height: 420px;
+        Rectangle { y: 0; height: 1px; background: Theme.line; }
+        if SettingsState.picker-loading: HorizontalLayout {
+            alignment: center;
+            spacing: 8px;
+            VerticalLayout { alignment: center; Spinner { size: 16px; } }
+            Text { text: "Loading models…"; color: Theme.muted; font-size: Theme.text-xs; vertical-alignment: center; }
+        }
+        if !SettingsState.picker-loading && SettingsState.picker-error != "": VerticalLayout {
+            alignment: center;
+            spacing: 6px;
+            Text { text: "The model list could not be loaded."; color: Theme.danger; font-size: Theme.text-xs; horizontal-alignment: center; }
+            Text { text: SettingsState.picker-error; color: Theme.muted; font-size: Theme.text-2xs; horizontal-alignment: center; wrap: word-wrap; }
+        }
+        if !SettingsState.picker-loading && SettingsState.picker-error == "": ScrollView {
+            y: 1px;
+            height: parent.height - 1px;
+            content-width: self.visible-width;
+            VerticalLayout {
+                alignment: start;
+                for row in SettingsState.picker-rows: Rectangle {
+                    height: 44px;
+                    background: row-touch.has-hover ? Theme.hover : row.id == (SettingsState.picker-speech ? SettingsState.transcription-model : SettingsState.ai-model) ? Theme.accent.with-alpha(0.1) : transparent;
+                    HorizontalLayout {
+                        padding-left: 20px;
+                        padding-right: 20px;
+                        spacing: 12px;
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            alignment: center;
+                            HorizontalLayout {
+                                spacing: 6px;
+                                Text { text: row.name; color: Theme.fg; font-size: Theme.text-xs; overflow: elide; }
+                                if row.vision: VerticalLayout { alignment: center; Icon { source: Icons.eye; size: 12px; colorize: Theme.muted; } }
+                            }
+                            Text { text: row.id; color: Theme.faint; font-size: Theme.text-2xs; overflow: elide; }
+                        }
+                        if row.prices != "": Text { text: row.prices; color: Theme.muted; font-size: Theme.text-2xs; vertical-alignment: center; }
+                    }
+                    row-touch := TouchArea { clicked => { SettingsState.pick(row.id); } }
+                }
+                if SettingsState.picker-rows.length == 0: Text {
+                    height: 80px;
+                    text: SettingsState.picker-query != "" ? "No model matches. Press Enter to use “" + SettingsState.picker-query + "” anyway." : "No models.";
+                    color: Theme.muted;
+                    font-size: Theme.text-xs;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+}
+
+export component SettingsView inherits Rectangle {
+    background: Theme.app;
+    property <string> key-draft;
+    init => { SettingsState.shown(); }
+    ScrollView {
+        content-width: self.visible-width;
+        HorizontalLayout {
+            alignment: center;
+            VerticalLayout {
+                width: min(720px, root.width - 64px);
+                padding-top: 32px;
+                padding-bottom: 32px;
+                spacing: 32px;
+
+                Group {
+                    title: "Editing";
+                    Row { title: "Save automatically"; detail: "Every change is written to disk a moment after you make it."; Switch { checked: SettingsState.autosave; toggled => { SettingsState.toggle("autosave"); } } }
+                    Row { title: "Snap on the timeline"; detail: "Clips snap to the playhead and to other clips. Hold Shift to place freely."; Switch { checked: SettingsState.snap; toggled => { SettingsState.toggle("snap"); } } }
+                    Row { title: "Show safe zone"; detail: "Marks the area that TikTok, Reels and Shorts cover with buttons."; Switch { checked: SettingsState.safe-area; toggled => { SettingsState.toggle("safe-area"); } } }
+                    Row {
+                        title: "Frame rate of new projects";
+                        Select {
+                            width: 160px;
+                            current: SettingsState.default-fps;
+                            options: [{ value: "24", label: "24 fps" }, { value: "25", label: "25 fps" }, { value: "30", label: "30 fps" }, { value: "50", label: "50 fps" }, { value: "60", label: "60 fps" }];
+                            selected(value) => { SettingsState.choose("default-fps", value); }
+                        }
+                    }
+                    Row {
+                        title: "Default format";
+                        last: true;
+                        Select { width: 160px; list-width: 260px; current: SettingsState.default-aspect; options: SettingsState.aspects; selected(value) => { SettingsState.choose("default-aspect", value); } }
+                    }
+                }
+
+                Group {
+                    title: "Media engine";
+                    Row { title: SettingsState.engine; detail: SettingsState.engine-detail; last: true; Icon { source: Icons.circle-check; size: 16px; colorize: Theme.ok; } }
+                }
+
+                Group {
+                    title: "Captions";
+                    Row {
+                        title: "Speech recognition";
+                        Segmented {
+                            width: 288px;
+                            current: SettingsState.provider;
+                            options: [{ value: "local", label: "On this computer" }, { value: "openrouter", label: "Cloud (OpenRouter)" }];
+                            selected(value) => { SettingsState.choose("provider", value); }
+                        }
+                    }
+                    Row {
+                        title: "Default language";
+                        last: SettingsState.provider != "openrouter" && SettingsState.provider != "local";
+                        Select {
+                            width: 192px;
+                            current: SettingsState.language;
+                            options: [
+                                { value: "auto", label: "Detect automatically" }, { value: "en", label: "English" }, { value: "pl", label: "Polish" },
+                                { value: "de", label: "German" }, { value: "es", label: "Spanish" }, { value: "fr", label: "French" },
+                                { value: "it", label: "Italian" }, { value: "pt", label: "Portuguese" }, { value: "uk", label: "Ukrainian" }, { value: "ru", label: "Russian" },
+                            ];
+                            selected(value) => { SettingsState.choose("language", value); }
+                        }
+                    }
+                    if SettingsState.provider == "openrouter": VerticalLayout {
+                        padding: 16px;
+                        spacing: 6px;
+                        Text { text: "Speech-to-text model"; color: Theme.fg; font-size: Theme.text-xs; font-weight: 500; }
+                        ModelButton { model: SettingsState.transcription-model; clicked => { SettingsState.open-picker(true); } }
+                        Text {
+                            text: SettingsState.has-key ? "Audio of the selected clip is sent to OpenRouter." : "Add your OpenRouter API key below to use cloud captions.";
+                            color: Theme.faint;
+                            font-size: Theme.text-2xs;
+                        }
+                    }
+                    if SettingsState.provider == "local": VerticalLayout {
+                        padding: 16px;
+                        spacing: 8px;
+                        Text { text: "Local models run privately with Whisper. Larger models are more accurate but slower."; color: Theme.muted; font-size: Theme.text-2xs; wrap: word-wrap; }
+                        Rectangle {
+                            border-radius: 6px;
+                            border-width: 1px;
+                            border-color: Theme.line;
+                            height: model-list.preferred-height;
+                            model-list := VerticalLayout {
+                                for model[index] in SettingsState.speech-models: Rectangle {
+                                    height: 48px;
+                                    HorizontalLayout {
+                                        padding-left: 12px;
+                                        padding-right: 12px;
+                                        spacing: 12px;
+                                        VerticalLayout {
+                                            alignment: center;
+                                            Rectangle {
+                                                width: 16px;
+                                                height: 16px;
+                                                border-radius: 8px;
+                                                border-width: SettingsState.whisper-model == model.id ? 5px : 1px;
+                                                border-color: SettingsState.whisper-model == model.id ? Theme.accent : Theme.line-strong;
+                                                opacity: model.installed ? 1 : 0.4;
+                                                TouchArea { enabled: model.installed; clicked => { SettingsState.choose("whisper-model", model.id); } }
+                                            }
+                                        }
+                                        VerticalLayout {
+                                            horizontal-stretch: 1;
+                                            alignment: center;
+                                            Text { text: model.label; color: Theme.fg; font-size: Theme.text-xs; }
+                                            Text { text: model.size; color: Theme.faint; font-size: Theme.text-2xs; }
+                                        }
+                                        if model.installed: Text { text: "Installed"; color: Theme.ok; font-size: Theme.text-2xs; vertical-alignment: center; }
+                                        if !model.installed && model.downloading: VerticalLayout {
+                                            alignment: center;
+                                            Rectangle {
+                                                width: 112px;
+                                                height: 6px;
+                                                border-radius: 3px;
+                                                background: Theme.line;
+                                                clip: true;
+                                                Rectangle { x: 0; width: parent.width * model.fraction; background: Theme.accent; }
+                                            }
+                                        }
+                                        if !model.installed && !model.downloading: VerticalLayout {
+                                            alignment: center;
+                                            Button { text: "Download"; icon: Icons.download; kind: ButtonKind.outline; size: ButtonSize.sm; enabled: !SettingsState.downloading; clicked => { SettingsState.download(model.id); } }
+                                        }
+                                    }
+                                    if index < SettingsState.speech-models.length - 1: Rectangle { y: parent.height - 1px; height: 1px; background: Theme.line; }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Group {
+                    title: "AI assistant";
+                    VerticalLayout {
+                        padding: 16px;
+                        spacing: 12px;
+                        Text {
+                            text: "Optional. With an OpenRouter key you can auto-edit voiceovers with your photos, rewrite text and use cloud captions. The key is kept in your system's password store and only sent to OpenRouter.";
+                            color: Theme.muted;
+                            font-size: Theme.text-2xs;
+                            wrap: word-wrap;
+                        }
+                        VerticalLayout {
+                            spacing: 6px;
+                            Text { text: "OpenRouter API key"; color: Theme.fg; font-size: Theme.text-xs; font-weight: 500; }
+                            key-field := TextField {
+                                placeholder: SettingsState.has-key ? "Saved key ending in " + (SettingsState.key-hint != "" ? SettingsState.key-hint : "…") : "sk-or-…";
+                                edited(value) => { root.key-draft = value; }
+                                accepted(value) => { if value != "" { SettingsState.save-key(value); key-field.text = ""; root.key-draft = ""; } }
+                            }
+                            if SettingsState.has-key && SettingsState.key-in-file: Text {
+                                text: "No system password store found, so the key is saved in a private file in the app's data folder.";
+                                color: Theme.warn;
+                                font-size: Theme.text-2xs;
+                                wrap: word-wrap;
+                            }
+                        }
+                        VerticalLayout {
+                            spacing: 6px;
+                            Text { text: "Model"; color: Theme.fg; font-size: Theme.text-xs; font-weight: 500; }
+                            ModelButton { model: SettingsState.ai-model; clicked => { SettingsState.open-picker(false); } }
+                            Text { text: "Used for photo matching and rewriting. Changes are saved right away."; color: Theme.faint; font-size: Theme.text-2xs; }
+                        }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            alignment: start;
+                            Button {
+                                text: SettingsState.has-key ? "Replace key" : "Save key";
+                                kind: ButtonKind.outline;
+                                size: ButtonSize.sm;
+                                enabled: root.key-draft != "";
+                                clicked => { SettingsState.save-key(root.key-draft); key-field.text = ""; root.key-draft = ""; }
+                            }
+                            if SettingsState.has-key: Button { text: "Remove key"; kind: ButtonKind.ghost; size: ButtonSize.sm; clicked => { SettingsState.save-key(""); } }
+                        }
+                    }
+                }
+
+                Group {
+                    title: "Export";
+                    Row {
+                        title: "Default folder";
+                        detail: SettingsState.export-folder != "" ? SettingsState.export-folder : "Videos folder";
+                        Button { text: "Change"; icon: Icons.folder-open; kind: ButtonKind.outline; size: ButtonSize.sm; clicked => { SettingsState.choose-folder(); } }
+                    }
+                    Row {
+                        title: "Prefer GPU encoding";
+                        detail: "Uses NVIDIA, AMD or Intel hardware encoders when available.";
+                        last: true;
+                        Switch { checked: SettingsState.hardware; toggled => { SettingsState.toggle("hardware"); } }
+                    }
+                }
+            }
+        }
+    }
+    if SettingsState.picker-open: ModelPicker { }
+}

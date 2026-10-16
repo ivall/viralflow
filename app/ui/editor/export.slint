@@ -1,0 +1,211 @@
+// The export dialog: settings, progress and the finished file.
+
+import { Theme, Icons } from "../theme.slint";
+import { Button, ButtonKind, ButtonSize, Dialog, DialogFooter, Field, Segmented, Select, Switch, Choice, Icon } from "../widgets.slint";
+
+export enum ExportPhase { setup, working, done, failed }
+
+export global ExportState {
+    in property <bool> open;
+    in property <ExportPhase> phase;
+    in property <string> description;
+    in property <string> path;
+    in property <string> format;
+    in property <string> codec;
+    in property <[Choice]> codecs;
+    in property <string> resolution;
+    in property <[Choice]> resolutions;
+    in property <string> fps;
+    in property <string> quality;
+    in property <bool> hardware;
+    in property <bool> hardware-available;
+    in property <string> hardware-label;
+    in property <string> loudness;
+    in property <string> summary;
+    in property <string> estimate;
+    in property <string> error;
+    // Progress
+    in property <string> stage;
+    in property <float> fraction;
+    in property <string> frames-label;
+    in property <string> eta-label;
+    in property <string> result;
+
+    callback choose(string, string);
+    callback toggle-hardware();
+    callback choose-path();
+    callback start();
+    callback cancel();
+    callback close();
+    callback reveal();
+    callback play();
+}
+
+export component ExportDialog inherits Dialog {
+    title: "Export video";
+    description: ExportState.description;
+    dismissible: ExportState.phase != ExportPhase.working;
+    dismissed => { ExportState.close(); }
+
+    if ExportState.phase == ExportPhase.setup || ExportState.phase == ExportPhase.failed: VerticalLayout {
+        padding-left: 20px;
+        padding-right: 20px;
+        padding-top: 16px;
+        padding-bottom: 16px;
+        spacing: 12px;
+        Field {
+            label: "Save to";
+            Rectangle {
+                horizontal-stretch: 1;
+                height: 32px;
+                border-radius: Theme.radius;
+                border-width: 1px;
+                border-color: path-touch.has-hover ? Theme.line-strong : Theme.line;
+                background: Theme.raised;
+                HorizontalLayout {
+                    padding-left: 10px;
+                    padding-right: 10px;
+                    spacing: 8px;
+                    Text { horizontal-stretch: 1; text: ExportState.path; color: Theme.fg; font-size: Theme.text-xs; vertical-alignment: center; overflow: elide; }
+                    VerticalLayout { alignment: center; Icon { source: Icons.folder-open; size: 14px; colorize: Theme.muted; } }
+                }
+                path-touch := TouchArea { clicked => { ExportState.choose-path(); } }
+            }
+        }
+        Field {
+            label: "Format";
+            Segmented {
+                horizontal-stretch: 1;
+                current: ExportState.format;
+                options: [{ value: "mp4", label: "MP4" }, { value: "mov", label: "MOV" }, { value: "webm", label: "WebM" }];
+                selected(value) => { ExportState.choose("format", value); }
+            }
+        }
+        Field {
+            label: "Codec";
+            Select { horizontal-stretch: 1; current: ExportState.codec; options: ExportState.codecs; selected(value) => { ExportState.choose("codec", value); } }
+        }
+        Field {
+            label: "Resolution";
+            Select { horizontal-stretch: 1; current: ExportState.resolution; options: ExportState.resolutions; selected(value) => { ExportState.choose("resolution", value); } }
+        }
+        Field {
+            label: "Frame rate";
+            Select {
+                horizontal-stretch: 1;
+                current: ExportState.fps;
+                options: [{ value: "24", label: "24 fps" }, { value: "25", label: "25 fps" }, { value: "30", label: "30 fps" }, { value: "50", label: "50 fps" }, { value: "60", label: "60 fps" }];
+                selected(value) => { ExportState.choose("fps", value); }
+            }
+        }
+        Field {
+            label: "Quality";
+            Segmented {
+                horizontal-stretch: 1;
+                current: ExportState.quality;
+                options: [{ value: "draft", label: "Draft" }, { value: "standard", label: "Good" }, { value: "high", label: "High" }, { value: "ultra", label: "Best" }];
+                selected(value) => { ExportState.choose("quality", value); }
+            }
+        }
+        if ExportState.codec != "vp9": Field {
+            label: "GPU encoding";
+            HorizontalLayout {
+                spacing: 8px;
+                VerticalLayout {
+                    alignment: center;
+                    Switch { checked: ExportState.hardware && ExportState.hardware-available; enabled: ExportState.hardware-available; toggled => { ExportState.toggle-hardware(); } }
+                }
+                Text { horizontal-stretch: 1; text: ExportState.hardware-label; color: Theme.muted; font-size: Theme.text-2xs; vertical-alignment: center; overflow: elide; }
+            }
+        }
+        Field {
+            label: "Loudness";
+            Select {
+                horizontal-stretch: 1;
+                current: ExportState.loudness;
+                options: [
+                    { value: "0", label: "Keep as mixed" },
+                    { value: "-14", label: "−14 LUFS - TikTok, Reels, YouTube" },
+                    { value: "-16", label: "−16 LUFS - podcasts, Spotify" },
+                    { value: "-23", label: "−23 LUFS - broadcast" },
+                ];
+                selected(value) => { ExportState.choose("loudness", value); }
+            }
+        }
+        Rectangle {
+            height: 32px;
+            border-radius: 6px;
+            background: Theme.app;
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                Text { horizontal-stretch: 1; text: ExportState.summary; color: Theme.muted; font-size: Theme.text-2xs; vertical-alignment: center; }
+                Text { text: ExportState.estimate; color: Theme.muted; font-size: Theme.text-2xs; vertical-alignment: center; }
+            }
+        }
+        if ExportState.phase == ExportPhase.failed: Rectangle {
+            height: error-text.preferred-height + 16px;
+            border-radius: 6px;
+            border-width: 1px;
+            border-color: Theme.danger.with-alpha(0.3);
+            background: Theme.danger.with-alpha(0.1);
+            error-text := Text {
+                x: 12px;
+                width: parent.width - 24px;
+                text: ExportState.error;
+                color: Theme.danger;
+                font-size: Theme.text-2xs;
+                wrap: word-wrap;
+            }
+        }
+    }
+
+    if ExportState.phase == ExportPhase.working: VerticalLayout {
+        padding-left: 20px;
+        padding-right: 20px;
+        padding-top: 32px;
+        padding-bottom: 32px;
+        spacing: 8px;
+        HorizontalLayout {
+            Text { horizontal-stretch: 1; text: ExportState.stage; color: Theme.fg; font-size: Theme.text-xs; }
+            Text { text: round(ExportState.fraction * 100) + "%"; color: Theme.muted; font-size: Theme.text-xs; }
+        }
+        Rectangle {
+            height: 6px;
+            border-radius: 3px;
+            background: Theme.line;
+            clip: true;
+            Rectangle {
+                x: 0;
+                width: parent.width * max(0, min(1, ExportState.fraction));
+                border-radius: 3px;
+                background: Theme.accent;
+                animate width { duration: 200ms; }
+            }
+        }
+        HorizontalLayout {
+            Text { horizontal-stretch: 1; text: ExportState.frames-label; color: Theme.faint; font-size: Theme.text-2xs; }
+            Text { text: ExportState.eta-label; color: Theme.faint; font-size: Theme.text-2xs; }
+        }
+    }
+
+    if ExportState.phase == ExportPhase.done: VerticalLayout {
+        padding-left: 20px;
+        padding-right: 20px;
+        padding-top: 32px;
+        padding-bottom: 32px;
+        spacing: 6px;
+        HorizontalLayout { alignment: center; Icon { source: Icons.circle-check; size: 32px; colorize: Theme.ok; } }
+        Text { text: "Your video is ready"; color: Theme.fg; font-size: Theme.text-sm; font-weight: 500; horizontal-alignment: center; }
+        Text { text: ExportState.result; color: Theme.muted; font-size: Theme.text-2xs; horizontal-alignment: center; overflow: elide; }
+    }
+
+    DialogFooter {
+        if ExportState.phase == ExportPhase.setup || ExportState.phase == ExportPhase.failed: Button { text: "Cancel"; kind: ButtonKind.ghost; clicked => { ExportState.close(); } }
+        if ExportState.phase == ExportPhase.setup || ExportState.phase == ExportPhase.failed: Button { text: "Export"; kind: ButtonKind.primary; enabled: ExportState.path != ""; clicked => { ExportState.start(); } }
+        if ExportState.phase == ExportPhase.working: Button { text: "Stop export"; kind: ButtonKind.outline; clicked => { ExportState.cancel(); } }
+        if ExportState.phase == ExportPhase.done: Button { text: "Show in folder"; icon: Icons.folder-open; kind: ButtonKind.ghost; clicked => { ExportState.reveal(); } }
+        if ExportState.phase == ExportPhase.done: Button { text: "Play"; icon: Icons.play; kind: ButtonKind.outline; clicked => { ExportState.play(); } }
+        if ExportState.phase == ExportPhase.done: Button { text: "Done"; kind: ButtonKind.primary; clicked => { ExportState.close(); } }
+    }
+}

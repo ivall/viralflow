@@ -1,0 +1,307 @@
+import { Theme, Icons } from "../theme.slint";
+import { Button, ButtonKind, ButtonSize, Surface, Menu, MenuEntry, Icon } from "../widgets.slint";
+import { DropProbe, EditorState, Handle, PointerPhase } from "state.slint";
+
+// The canvas and the area around it report every pointer event in canvas
+// coordinates; Rust decides what is under the pointer (layers, corners, the
+// rotation knob), so nothing that moves during a drag holds the grab.
+component CanvasTouch inherits TouchArea {
+    // Offset of this area inside the canvas.
+    in property <length> origin-x;
+    in property <length> origin-y;
+    mouse-cursor: EditorState.canvas-cursor == 1 ? MouseCursor.move
+        : EditorState.canvas-cursor == 2 ? MouseCursor.nwse-resize
+        : EditorState.canvas-cursor == 3 ? MouseCursor.nesw-resize
+        : EditorState.canvas-cursor == 4 ? MouseCursor.grab
+        : MouseCursor.default;
+    pointer-event(event) => {
+        if event.kind == PointerEventKind.move && !self.pressed {
+            EditorState.canvas-hover(self.mouse-x + root.origin-x, self.mouse-y + root.origin-y);
+        }
+        if event.button == PointerEventButton.left || event.kind == PointerEventKind.move {
+            if event.kind == PointerEventKind.down {
+                EditorState.focus-request += 1;
+                EditorState.canvas-pointer(PointerPhase.down, self.mouse-x + root.origin-x, self.mouse-y + root.origin-y, event.modifiers.shift, event.modifiers.control);
+            } else if event.kind == PointerEventKind.up {
+                EditorState.canvas-pointer(PointerPhase.up, self.mouse-x + root.origin-x, self.mouse-y + root.origin-y, event.modifiers.shift, event.modifiers.control);
+            }
+        }
+    }
+    moved => {
+        if self.pressed {
+            EditorState.canvas-pointer(PointerPhase.move, self.mouse-x + root.origin-x, self.mouse-y + root.origin-y, false, false);
+        }
+    }
+    double-clicked => {
+        EditorState.canvas-pointer(PointerPhase.double, self.mouse-x + root.origin-x, self.mouse-y + root.origin-y, false, false);
+    }
+}
+
+component HandleOutline inherits Path {
+    in property <Handle> handle;
+    stroke: root.handle.primary ? Theme.accent : Theme.accent.with-alpha(0.55);
+    stroke-width: 1.5px;
+    viewbox-x: 0;
+    viewbox-y: 0;
+    viewbox-width: self.width / 1px;
+    viewbox-height: self.height / 1px;
+    MoveTo { x: root.handle.x0 / 1px; y: root.handle.y0 / 1px; }
+    LineTo { x: root.handle.x1 / 1px; y: root.handle.y1 / 1px; }
+    LineTo { x: root.handle.x2 / 1px; y: root.handle.y2 / 1px; }
+    LineTo { x: root.handle.x3 / 1px; y: root.handle.y3 / 1px; }
+    Close { }
+}
+
+component Corner inherits Rectangle {
+    in property <length> cx;
+    in property <length> cy;
+    in property <bool> diagonal;
+    x: self.cx - 5px;
+    y: self.cy - 5px;
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    border-width: 1px;
+    border-color: Theme.accent;
+    background: #ffffff;
+}
+
+export component Player inherits Surface {
+    in property <bool> fullscreen;
+    border-radius: root.fullscreen ? 0px : Theme.radius-panel;
+    border-width: root.fullscreen ? 0px : 1px;
+    background: root.fullscreen ? #000000 : Theme.panel;
+    property <[MenuEntry]> aspects: [
+        { id: "9:16", label: "9:16  TikTok, Reels, Shorts", enabled: true },
+        { id: "16:9", label: "16:9  YouTube", enabled: true },
+        { id: "1:1", label: "1:1  Square post", enabled: true },
+        { id: "4:5", label: "4:5  Instagram post", enabled: true },
+        { id: "3:4", label: "3:4  Classic portrait", enabled: true },
+        { id: "21:9", label: "21:9  Cinematic", enabled: true },
+    ];
+
+    VerticalLayout {
+        // Header
+        if !root.fullscreen: Rectangle {
+            height: 48px;
+            HorizontalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                Text {
+                    text: "Preview";
+                    color: Theme.fg;
+                    font-size: Theme.text-sm;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                    width: 120px;
+                }
+                Text {
+                    horizontal-stretch: 1;
+                    text: EditorState.format-label;
+                    color: Theme.faint;
+                    font-size: Theme.text-xs;
+                    vertical-alignment: center;
+                    horizontal-alignment: center;
+                }
+                Rectangle { width: 120px; }
+            }
+            Rectangle { y: parent.height - 1px; height: 1px; background: Theme.line; }
+        }
+
+        // Viewport
+        viewport := Rectangle {
+            vertical-stretch: 1;
+            clip: true;
+            changed width => { EditorState.preview-size(self.width, self.height); }
+            changed height => { EditorState.preview-size(self.width, self.height); }
+            init => { EditorState.preview-size(self.width, self.height); }
+
+            // Clicks around the canvas clear the selection.
+            CanvasTouch {
+                origin-x: -canvas.x;
+                origin-y: -canvas.y;
+            }
+
+            canvas := Rectangle {
+                x: (parent.width - EditorState.canvas-width) / 2;
+                y: (parent.height - EditorState.canvas-height) / 2;
+                width: EditorState.canvas-width;
+                height: EditorState.canvas-height;
+                border-width: 1px;
+                border-color: #ffffff0f;
+                visible: !EditorState.empty || EditorState.loading;
+                Image {
+                    width: parent.width;
+                    height: parent.height;
+                    source: EditorState.frame;
+                    image-fit: fill;
+                }
+                CanvasTouch {
+                    origin-x: 0;
+                    origin-y: 0;
+                }
+                if EditorState.grid: Rectangle {
+                    for line in [1, 2]: Rectangle { x: parent.width * line / 3; width: 1px; background: #ffffff2e; }
+                    for line in [1, 2]: Rectangle { y: parent.height * line / 3; height: 1px; background: #ffffff2e; }
+                }
+                if EditorState.safe-area: Rectangle {
+                    x: parent.width * 0.06;
+                    y: parent.height * 0.10;
+                    width: parent.width * 0.88;
+                    height: parent.height * 0.72;
+                    border-radius: 4px;
+                    border-width: 1px;
+                    border-color: #ffffff59;
+                }
+                if EditorState.guide-x >= 0: Rectangle { x: EditorState.guide-x; width: 1px; background: #f472b6; }
+                if EditorState.guide-y >= 0: Rectangle { y: EditorState.guide-y; height: 1px; background: #f472b6; }
+                for handle in EditorState.handles: HandleOutline {
+                    width: parent.width;
+                    height: parent.height;
+                    handle: handle;
+                }
+                for handle in EditorState.handles: Rectangle {
+                    width: parent.width;
+                    height: parent.height;
+                    if handle.primary && !handle.locked && EditorState.handles.length == 1: Rectangle {
+                        Corner { cx: handle.x0; cy: handle.y0; diagonal: true; }
+                        Corner { cx: handle.x1; cy: handle.y1; diagonal: false; }
+                        Corner { cx: handle.x2; cy: handle.y2; diagonal: true; }
+                        Corner { cx: handle.x3; cy: handle.y3; diagonal: false; }
+                        // Rotation knob above the top edge.
+                        Rectangle {
+                            x: (handle.x0 + handle.x1) / 2 + sin(handle.rotation * 1deg) * 22px - 10px;
+                            y: (handle.y0 + handle.y1) / 2 - cos(handle.rotation * 1deg) * 22px - 10px;
+                            width: 20px;
+                            height: 20px;
+                            border-radius: 10px;
+                            border-width: 1px;
+                            border-color: Theme.accent;
+                            background: Theme.panel;
+                            Icon { source: Icons.rotate-cw; size: 12px; colorize: Theme.accent; }
+                        }
+                    }
+                }
+            }
+
+            if EditorState.empty && !EditorState.loading: VerticalLayout {
+                alignment: center;
+                spacing: 12px;
+                Text { text: "Start by adding media"; color: Theme.fg; font-size: Theme.text-sm; font-weight: 500; horizontal-alignment: center; }
+                Text {
+                    text: "Import videos, photos or music, or drag files from your computer anywhere into the editor.";
+                    color: Theme.muted;
+                    font-size: Theme.text-xs;
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                    max-width: 256px;
+                }
+                HorizontalLayout {
+                    alignment: center;
+                    Button {
+                        text: "Import media";
+                        icon: Icons.upload;
+                        kind: ButtonKind.primary;
+                        clicked => { EditorState.import-media(); }
+                    }
+                }
+            }
+        
+            DropProbe { target: "preview"; }
+            if EditorState.drop-preview: Rectangle {
+                border-radius: 8px;
+                border-width: 2px;
+                border-color: Theme.accent;
+                background: Theme.accent.with-alpha(0.06);
+            }
+        }
+
+        // Transport
+        Rectangle {
+            height: 56px;
+            Rectangle { y: 0; height: 1px; background: Theme.line; }
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                spacing: 4px;
+                HorizontalLayout {
+                    width: 192px;
+                    spacing: 8px;
+                    alignment: start;
+                    VerticalLayout {
+                        alignment: center;
+                        Rectangle {
+                            height: 30px;
+                            width: time-text.preferred-width + 20px;
+                            border-radius: Theme.radius;
+                            background: Theme.raised;
+                            time-text := Text {
+                                text: EditorState.time-label;
+                                color: Theme.fg;
+                                font-size: Theme.text-xs;
+                                font-weight: 500;
+                                vertical-alignment: center;
+                                horizontal-alignment: center;
+                            }
+                        }
+                    }
+                    Text {
+                        text: "/ " + EditorState.end-label;
+                        color: Theme.faint;
+                        font-size: Theme.text-xs;
+                        vertical-alignment: center;
+                    }
+                }
+                Rectangle { horizontal-stretch: 1; }
+                HorizontalLayout {
+                    spacing: 2px;
+                    alignment: center;
+                    VerticalLayout { alignment: center; Button { icon: Icons.skip-back; kind: ButtonKind.ghost; tooltip: "Go to start (Home)"; clicked => { EditorState.go-start(); } } }
+                    VerticalLayout { alignment: center; Button { icon: Icons.step-back; kind: ButtonKind.ghost; tooltip: "Previous frame (←)"; clicked => { EditorState.step(-1); } } }
+                    VerticalLayout {
+                        alignment: center;
+                        padding-left: 4px;
+                        padding-right: 4px;
+                        play := Rectangle {
+                            width: 36px;
+                            height: 36px;
+                            border-radius: 18px;
+                            background: play-touch.has-hover ? Theme.accent-hover : Theme.accent;
+                            Icon {
+                                x: EditorState.playing ? (parent.width - self.width) / 2 : (parent.width - self.width) / 2 + 1px;
+                                source: EditorState.playing ? Icons.pause : Icons.play;
+                                size: 16px;
+                                colorize: Theme.accent-ink;
+                            }
+                            play-touch := TouchArea { clicked => { EditorState.toggle-play(); } }
+                        }
+                    }
+                    VerticalLayout { alignment: center; Button { icon: Icons.step-forward; kind: ButtonKind.ghost; tooltip: "Next frame (→)"; clicked => { EditorState.step(1); } } }
+                    VerticalLayout { alignment: center; Button { icon: Icons.skip-forward; kind: ButtonKind.ghost; tooltip: "Go to end (End)"; clicked => { EditorState.go-end(); } } }
+                }
+                Rectangle { horizontal-stretch: 1; }
+                HorizontalLayout {
+                    width: 192px;
+                    spacing: 2px;
+                    alignment: end;
+                    VerticalLayout {
+                        alignment: center;
+                        aspect-button := Button {
+                            text: EditorState.aspect-label;
+                            kind: ButtonKind.secondary;
+                            clicked => { aspect-menu.open(self.x - 120px, -248px); }
+                        }
+                    }
+                    VerticalLayout { alignment: center; Button { icon: Icons.grid; kind: ButtonKind.ghost; active: EditorState.grid; tooltip: "Grid"; clicked => { EditorState.grid = !EditorState.grid; } } }
+                    VerticalLayout { alignment: center; Button { icon: EditorState.muted ? Icons.volume-x : Icons.volume; kind: ButtonKind.ghost; tooltip: EditorState.muted ? "Unmute preview" : "Mute preview"; clicked => { EditorState.toggle-mute(); } } }
+                    VerticalLayout { alignment: center; Button { icon: EditorState.fullscreen ? Icons.shrink : Icons.expand; kind: ButtonKind.ghost; tooltip: EditorState.fullscreen ? "Exit full screen" : "Full screen"; clicked => { EditorState.toggle-fullscreen(); } } }
+                    aspect-menu := Menu {
+                        menu-width: 240px;
+                        entries: root.aspects;
+                        activated(id) => { EditorState.set-aspect(id); }
+                    }
+                }
+            }
+        }
+    }
+}

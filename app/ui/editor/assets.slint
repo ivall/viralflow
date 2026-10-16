@@ -1,0 +1,857 @@
+// The asset panels on the left of the editor: media, text styles, stickers and
+// shapes, effects, transitions and captions. Everything is dragged onto the
+// timeline or the preview, or added with a click.
+
+import { Theme, Icons } from "../theme.slint";
+import { Button, ButtonKind, ButtonSize, Surface, Icon, TextField, Menu, MenuEntry, Choice, ScrollView, Field, Select, Segmented } from "../widgets.slint";
+import { EditorState } from "state.slint";
+
+export struct AssetTile {
+    id: string,
+    name: string,
+    // 0 video, 1 image, 2 audio
+    kind: int,
+    thumb: image,
+    duration: string,
+    used: bool,
+    missing: bool,
+    // Thumbnail aspect ratio (width / height).
+    ratio: float,
+}
+
+export struct PresetCard {
+    id: string,
+    label: string,
+    preview: image,
+}
+
+export struct StickerGroup {
+    title: string,
+    emoji: [string],
+}
+
+export struct ShapeCard {
+    kind: string,
+    label: string,
+    color: color,
+}
+
+export global AssetsState {
+    // Media
+    in property <[AssetTile]> assets;
+    in property <[Choice]> categories;
+    in-out property <string> filter: "all";
+    in-out property <string> query;
+    /// The project has any media (otherwise the import prompt shows).
+    in property <bool> has-media;
+    in property <string> empty-title;
+    in property <string> empty-detail;
+    // Text
+    in property <[PresetCard]> text-presets;
+    in property <[string]> text-categories;
+    in-out property <string> text-category: "All";
+    // Stickers
+    in property <[ShapeCard]> shapes;
+    in property <[StickerGroup]> stickers;
+    // Effects (the selection they apply to)
+    in property <[Choice]> effects;
+    in property <string> current-effect;
+    in property <int> effect-targets;
+    // Transitions (the cut next to the selected clip)
+    in property <[Choice]> transitions;
+    in property <bool> has-seam;
+    in property <string> seam-kind;
+    in property <string> seam-label;
+    in property <bool> can-apply-all;
+
+    /// Pointer pressed on something that can be dragged ("asset", "text",
+    /// "sticker", "shape", "effect", "transition") at window coordinates.
+    callback press(string, string, length, length);
+    callback drag-to(length, length);
+    /// Released: drops, or acts as a click when the pointer barely moved.
+    callback release(length, length);
+    callback add(string, string);
+    callback import();
+    callback filter-changed();
+    callback asset-menu(string, string);
+    callback action(string);
+}
+
+/// Something in a panel that can be dragged out (or clicked). It is the only
+/// touch area of its item: a second one on top would swallow every press.
+component DragSource inherits TouchArea {
+    in property <string> kind;
+    in property <string> id;
+    /// False for media whose file is missing (it still gets its context menu).
+    in property <bool> draggable: true;
+    /// Right click, at a point in this area.
+    callback context(length, length);
+    mouse-cursor: root.draggable ? MouseCursor.grab : MouseCursor.default;
+    pointer-event(event) => {
+        if event.button == PointerEventButton.left && event.kind == PointerEventKind.down && root.draggable {
+            AssetsState.press(root.kind, root.id, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+        }
+        if event.button == PointerEventButton.left && event.kind == PointerEventKind.up && root.draggable {
+            AssetsState.release(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+        }
+        if event.button == PointerEventButton.right && event.kind == PointerEventKind.down {
+            root.context(self.mouse-x, self.mouse-y);
+        }
+    }
+    moved => {
+        if self.pressed && root.draggable { AssetsState.drag-to(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y); }
+    }
+}
+
+component PanelTab inherits Rectangle {
+    in property <string> id;
+    in property <string> label;
+    in property <image> icon;
+    property <bool> selected: EditorState.panel == root.id;
+    height: 56px;
+    border-radius: 8px;
+    background: root.selected ? Theme.raised : tab-touch.has-hover ? Theme.hover.with-alpha(0.5) : transparent;
+    VerticalLayout {
+        alignment: center;
+        spacing: 4px;
+        HorizontalLayout {
+            alignment: center;
+            Icon { source: root.icon; size: 18px; colorize: root.selected ? Theme.accent : tab-touch.has-hover ? Theme.fg : Theme.muted; }
+        }
+        Text {
+            text: root.label;
+            color: root.selected || tab-touch.has-hover ? Theme.fg : Theme.muted;
+            font-size: 11px;
+            font-weight: 500;
+            horizontal-alignment: center;
+            overflow: elide;
+        }
+    }
+    tab-touch := TouchArea { clicked => { EditorState.panel = root.id; } }
+}
+
+component PanelTitle inherits Text {
+    color: Theme.fg;
+    font-size: Theme.text-xs;
+    font-weight: 600;
+}
+
+// ------------------------------------------------------------ media
+
+component MediaTile inherits Rectangle {
+    in property <AssetTile> tile;
+    callback context(length, length);
+    VerticalLayout {
+        spacing: 4px;
+        frame := Rectangle {
+            height: self.width * 9 / 16;
+            border-radius: 6px;
+            border-width: 1px;
+            border-color: root.tile.missing ? Theme.danger.with-alpha(0.6) : touch.has-hover ? Theme.line-strong : Theme.line;
+            background: #00000066;
+            clip: true;
+            if root.tile.thumb.width > 0: Image {
+                source: root.tile.thumb;
+                width: root.tile.ratio >= 16 / 9 ? parent.width : parent.height * root.tile.ratio;
+                height: root.tile.ratio >= 16 / 9 ? parent.width / max(0.01, root.tile.ratio) : parent.height;
+                image-fit: fill;
+            }
+            if root.tile.thumb.width == 0 && root.tile.kind == 0: Icon { source: Icons.film; size: 20px; colorize: Theme.faint; }
+            if root.tile.kind == 2: Rectangle {
+                background: Theme.clip-audio.with-alpha(0.18);
+                Icon { source: Icons.audio-lines; size: 24px; colorize: Theme.clip-audio; }
+            }
+            if root.tile.duration != "": Rectangle {
+                x: parent.width - self.width - 4px;
+                y: parent.height - self.height - 4px;
+                width: duration-text.preferred-width + 8px;
+                height: 16px;
+                border-radius: 4px;
+                background: #000000b3;
+                duration-text := Text { text: root.tile.duration; color: #ffffff; font-size: 11px; }
+            }
+            if root.tile.used: Rectangle {
+                x: 4px;
+                y: 4px;
+                width: 6px;
+                height: 6px;
+                border-radius: 3px;
+                background: Theme.accent;
+            }
+            if root.tile.missing: Rectangle {
+                background: #000000b3;
+                HorizontalLayout {
+                    alignment: center;
+                    spacing: 4px;
+                    VerticalLayout { alignment: center; Icon { source: Icons.circle-alert; size: 14px; colorize: Theme.danger; } }
+                    Text { text: "Missing"; color: Theme.danger; font-size: 11px; font-weight: 500; vertical-alignment: center; }
+                }
+            }
+            touch := DragSource {
+                kind: "asset";
+                id: root.tile.id;
+                draggable: !root.tile.missing;
+                double-clicked => {
+                    if !root.tile.missing { AssetsState.add("asset", root.tile.id); }
+                }
+                context(x, y) => { root.context(x, y); }
+            }
+            Rectangle {
+                visible: !root.tile.missing;
+                opacity: touch.has-hover || add-touch.has-hover ? 1 : 0;
+                animate opacity { duration: Theme.fast; }
+                x: parent.width - 28px;
+                y: 4px;
+                width: 24px;
+                height: 24px;
+                border-radius: 6px;
+                background: add-touch.has-hover ? Theme.accent-hover : Theme.accent;
+                drop-shadow-blur: 4px;
+                drop-shadow-color: #00000066;
+                Icon { source: Icons.plus; size: 16px; colorize: Theme.accent-ink; }
+                add-touch := TouchArea { clicked => { AssetsState.add("asset", root.tile.id); } }
+            }
+        }
+        Text {
+            text: root.tile.name;
+            color: Theme.muted;
+            font-size: Theme.text-xs;
+            overflow: elide;
+        }
+    }
+}
+
+component MediaPanel inherits Rectangle {
+    property <string> menu-target;
+    HorizontalLayout {
+    VerticalLayout {
+        width: 84px;
+        padding-left: 6px;
+        padding-right: 6px;
+        padding-top: 10px;
+        spacing: 1px;
+        alignment: start;
+        for category in AssetsState.categories: Rectangle {
+            height: 28px;
+            border-radius: 6px;
+            background: AssetsState.filter == category.value ? Theme.hover : transparent;
+            HorizontalLayout {
+                padding-left: 8px;
+                padding-right: 8px;
+                spacing: 4px;
+                Text {
+                    horizontal-stretch: 1;
+                    text: category.label;
+                    color: AssetsState.filter == category.value || category-touch.has-hover ? Theme.fg : Theme.muted;
+                    font-size: Theme.text-xs;
+                    font-weight: AssetsState.filter == category.value ? 500 : 400;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+                if category.hint != "0": Text { text: category.hint; color: Theme.faint; font-size: 11px; vertical-alignment: center; }
+            }
+            category-touch := TouchArea {
+                clicked => {
+                    AssetsState.filter = category.value;
+                    AssetsState.filter-changed();
+                }
+            }
+        }
+    }
+    Rectangle { width: 1px; background: Theme.line; }
+    VerticalLayout {
+        horizontal-stretch: 1;
+        HorizontalLayout {
+            padding: 10px;
+            spacing: 6px;
+            TextField {
+                horizontal-stretch: 1;
+                icon: Icons.search;
+                placeholder: "Search media";
+                text: AssetsState.query;
+                edited(value) => {
+                    AssetsState.query = value;
+                    AssetsState.filter-changed();
+                }
+            }
+            Button { icon: Icons.upload; kind: ButtonKind.primary; tooltip: "Import media"; clicked => { AssetsState.import(); } }
+        }
+        if AssetsState.assets.length > 0: grid-scroll := ScrollView {
+            vertical-stretch: 1;
+            content-width: self.visible-width;
+            property <length> gap: 8px;
+            property <length> inner: self.visible-width - 20px;
+            property <int> columns: max(1, floor((self.inner + self.gap) / (104px + self.gap)));
+            property <length> cell: (self.inner - (self.columns - 1) * self.gap) / self.columns;
+            property <length> row-height: self.cell * 9 / 16 + 34px;
+            content-height: ceil(AssetsState.assets.length / self.columns) * self.row-height + 12px;
+            for tile[index] in AssetsState.assets: MediaTile {
+                x: 10px + mod(index, grid-scroll.columns) * (grid-scroll.cell + grid-scroll.gap);
+                y: floor(index / grid-scroll.columns) * grid-scroll.row-height;
+                width: grid-scroll.cell;
+                tile: tile;
+                context(x, y) => {
+                    root.menu-target = tile.id;
+                    asset-menu.open(self.x + x, self.y + y + 52px);
+                }
+            }
+        }
+        if AssetsState.assets.length == 0: VerticalLayout {
+            vertical-stretch: 1;
+            alignment: start;
+            padding: 16px;
+            padding-top: 24px;
+            spacing: 4px;
+            Text { text: AssetsState.empty-title; color: Theme.fg; font-size: Theme.text-xs; font-weight: 500; horizontal-alignment: center; }
+            if AssetsState.empty-detail != "": Text { text: AssetsState.empty-detail; color: Theme.muted; font-size: Theme.text-2xs; horizontal-alignment: center; wrap: word-wrap; }
+            if !AssetsState.has-media: HorizontalLayout {
+                alignment: center;
+                padding-top: 8px;
+                Button { text: "Import"; icon: Icons.upload; kind: ButtonKind.primary; clicked => { AssetsState.import(); } }
+            }
+        }
+    }
+    }
+    asset-menu := Menu {
+        menu-width: 190px;
+        entries: [
+            { id: "add", label: "Add at playhead", enabled: true },
+            { id: "relink", label: "Relink file…", enabled: true },
+            { id: "reveal", label: "Show in folder", enabled: true },
+            { separator: true },
+            { id: "remove", label: "Remove from project", danger: true, enabled: true },
+        ];
+        activated(id) => { AssetsState.asset-menu(id, root.menu-target); }
+    }
+}
+
+// ------------------------------------------------------------ text
+
+component TextPanel inherits VerticalLayout {
+    VerticalLayout {
+        padding: 12px;
+        spacing: 12px;
+        Button { text: "Add text"; icon: Icons.plus; kind: ButtonKind.primary; stretch: true; clicked => { AssetsState.add("text", ""); } }
+        chips := Rectangle {
+            // Wrapping row of category chips (all fit in two rows at panel width).
+            property <length> chip-gap: 4px;
+            height: 28px;
+            HorizontalLayout {
+                spacing: chips.chip-gap;
+                alignment: start;
+                for category in AssetsState.text-categories: Rectangle {
+                    width: chip-label.preferred-width + 24px;
+                    height: 28px;
+                    border-radius: 14px;
+                    background: AssetsState.text-category == category ? Theme.fg : Theme.raised;
+                    chip-label := Text {
+                        text: category;
+                        color: AssetsState.text-category == category ? Theme.app : chip-touch.has-hover ? Theme.fg : Theme.muted;
+                        font-size: Theme.text-xs;
+                        font-weight: AssetsState.text-category == category ? 500 : 400;
+                    }
+                    chip-touch := TouchArea { clicked => { AssetsState.text-category = category; AssetsState.filter-changed(); } }
+                }
+            }
+        }
+    }
+    cards := ScrollView {
+        vertical-stretch: 1;
+        content-width: self.visible-width;
+        property <length> cell: (self.visible-width - 24px - 8px) / 2;
+        content-height: ceil(AssetsState.text-presets.length / 2) * 114px + 12px;
+        for preset[index] in AssetsState.text-presets: Rectangle {
+            x: 12px + mod(index, 2) * (cards.cell + 8px);
+            y: floor(index / 2) * 114px;
+            width: cards.cell;
+            height: 108px;
+            VerticalLayout {
+                spacing: 6px;
+                Rectangle {
+                    height: 84px;
+                    border-radius: 8px;
+                    border-width: 1px;
+                    border-color: card-touch.has-hover ? Theme.line-strong : Theme.line;
+                    background: @linear-gradient(160deg, #2a2d36 0%, #1a1b21 70%);
+                    clip: true;
+                    Rectangle { background: @radial-gradient(circle, #ffffff12 0%, #ffffff00 60%); x: -parent.width * 0.3; y: -parent.height * 0.6; width: parent.width * 1.2; height: parent.height * 1.2; }
+                    Image {
+                        source: preset.preview;
+                        width: min(parent.width - 16px, self.source.width * 0.5px);
+                        height: min(parent.height - 12px, self.source.height * 0.5px);
+                        image-fit: contain;
+                    }
+                }
+                Text { text: preset.label; color: card-touch.has-hover ? Theme.fg : Theme.muted; font-size: Theme.text-2xs; overflow: elide; }
+            }
+            card-touch := DragSource { kind: "text"; id: preset.id; }
+        }
+    }
+}
+
+// ------------------------------------------------------------ stickers & shapes
+
+component StickersPanel inherits ScrollView {
+    content-width: self.visible-width;
+    content-height: content.preferred-height;
+    content := VerticalLayout {
+        width: root.visible-width;
+        padding: 12px;
+        spacing: 8px;
+        PanelTitle { text: "Shapes"; }
+        HorizontalLayout {
+            spacing: 6px;
+            for shape in AssetsState.shapes: Rectangle {
+                height: 64px;
+                horizontal-stretch: 1;
+                border-radius: 6px;
+                background: shape-touch.has-hover ? Theme.hover : transparent;
+                VerticalLayout {
+                    padding: 6px;
+                    spacing: 4px;
+                    Rectangle {
+                        height: 40px;
+                        border-radius: 4px;
+                        background: Theme.app;
+                        if shape.kind == "rect": Rectangle { width: 32px; height: 16px; border-radius: 4px; background: shape.color; }
+                        if shape.kind == "circle": Rectangle { width: 24px; height: 24px; border-radius: 12px; background: shape.color; }
+                        if shape.kind == "line": Rectangle { width: 32px; height: 2px; border-radius: 1px; background: shape.color; }
+                        if shape.kind == "blur": Rectangle { width: 32px; height: 20px; border-radius: 6px; border-width: 1px; border-color: #ffffff33; background: #ffffff1a; }
+                    }
+                    Text { text: shape.label; color: Theme.muted; font-size: 11px; horizontal-alignment: center; overflow: elide; }
+                }
+                shape-touch := DragSource { kind: "shape"; id: shape.kind; }
+            }
+        }
+        for group in AssetsState.stickers: VerticalLayout {
+            spacing: 8px;
+            padding-top: 12px;
+            PanelTitle { text: group.title; }
+            emoji-grid := Rectangle {
+                property <length> cell: (self.width - 5 * 4px) / 6;
+                height: ceil(group.emoji.length / 6) * (self.cell + 4px) - 4px;
+                for emoji[index] in group.emoji: Rectangle {
+                    x: mod(index, 6) * (emoji-grid.cell + 4px);
+                    y: floor(index / 6) * (emoji-grid.cell + 4px);
+                    width: emoji-grid.cell;
+                    height: emoji-grid.cell;
+                    border-radius: 6px;
+                    background: emoji-touch.has-hover ? Theme.hover : transparent;
+                    Text {
+                        text: emoji;
+                        font-family: "Segoe UI Emoji";
+                        font-size: emoji-touch.has-hover ? 24px : 20px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        animate font-size { duration: Theme.fast; }
+                    }
+                    emoji-touch := DragSource { kind: "sticker"; id: emoji; }
+                }
+            }
+        }
+    }
+}
+
+// ------------------------------------------------------------ effects
+
+/// A tiny landscape that each effect treats the way it treats a clip.
+component EffectGlyph inherits Rectangle {
+    in property <string> kind;
+    in property <bool> playing;
+    property <duration> t: self.playing ? animation-tick() : 0ms;
+    property <float> phase: mod(self.t / 1100ms, 1);
+    property <float> scene-scale: root.kind == "zoom-in" ? (root.playing ? 1 + 0.22 * (0.5 - 0.5 * cos(root.phase * 360deg)) : 1.12)
+        : root.kind == "zoom-out" ? (root.playing ? 1.22 - 0.22 * (0.5 - 0.5 * cos(root.phase * 360deg)) : 0.84)
+        : root.kind == "punch" ? (root.playing ? 1 + 0.18 * max(0, 1 - root.phase / 0.35) : 1)
+        : root.kind == "blur" ? 1.1
+        : root.kind == "shake" ? 1.08 : 1;
+    property <length> shake-x: root.kind == "shake" && root.playing && root.phase < 0.6 ? self.width * 0.06 * sin(root.phase * 3000deg) * (1 - root.phase / 0.6) : 0px;
+    background: #1a1d29;
+    clip: true;
+    scene := Rectangle {
+        x: (root.width - self.width) / 2 + root.shake-x;
+        y: (root.height - self.height) * 0.6;
+        width: root.width * root.scene-scale;
+        height: root.height * root.scene-scale;
+        background: @linear-gradient(160deg, #4f7cff 0%, #8b6cf6 100%);
+        opacity: root.kind == "vhs" ? 0.85 : 1;
+        Rectangle {
+            x: parent.width * 0.58;
+            y: parent.height * 0.22;
+            width: parent.width * 0.26;
+            height: self.width;
+            border-radius: self.width / 2;
+            background: #ffd166;
+            drop-shadow-color: root.kind == "shake" ? #ffd16673 : transparent;
+            drop-shadow-offset-x: -7px;
+            drop-shadow-blur: root.kind == "blur" ? 6px : 0px;
+        }
+        Rectangle {
+            x: -parent.width * 0.1;
+            y: parent.height * 0.68;
+            width: parent.width * 1.2;
+            height: parent.height * 0.7;
+            border-radius: self.height / 2;
+            background: #2b2f6b;
+        }
+    }
+    if root.kind == "blur": Rectangle { background: #8b6cf640; }
+    if root.kind == "vhs": Rectangle {
+        background: #c8a06a22;
+        for line in 14: Rectangle {
+            y: line * root.height / 14 + (root.playing ? mod(root.t / 200ms, 1) * root.height / 14 : 0px);
+            height: 1px;
+            background: #00000047;
+        }
+    }
+    if root.kind == "flash": Rectangle {
+        background: @radial-gradient(circle, #ffffffbf 0%, #ffffff26 70%);
+        opacity: root.playing ? max(0, 1 - root.phase / 0.45) : 1;
+    }
+    if root.kind == "punch": Rectangle {
+        background: @radial-gradient(circle, #ffffff00 30%, #ffffff38 60%);
+    }
+    if root.kind == "glitch": Rectangle {
+        y: root.height * 0.34;
+        height: root.height * 0.12;
+        x: root.playing && mod(root.t / 250ms, 2) >= 1 ? -root.width * 0.1 : root.width * 0.08;
+        background: #ff3c788c;
+    }
+}
+
+component EffectsPanel inherits ScrollView {
+    content-width: self.visible-width;
+    content-height: content.preferred-height;
+    content := VerticalLayout {
+        width: root.visible-width;
+        padding: 12px;
+        spacing: 12px;
+        Text {
+            text: AssetsState.effect-targets == 0 ? "Drag an effect onto a clip. Move it or drag its edges on the timeline to choose when it plays."
+                : "Drag an effect onto a clip, or click to apply it to " + (AssetsState.effect-targets == 1 ? "the selected clip" : AssetsState.effect-targets + " selected clips") + ". Move it or drag its edges on the timeline to choose when it plays.";
+            color: Theme.muted;
+            font-size: Theme.text-2xs;
+            wrap: word-wrap;
+        }
+        effects-grid := Rectangle {
+            property <length> cell: (self.width - 16px) / 3;
+            property <length> cell-height: self.cell * 9 / 16 + 30px;
+            height: ceil(AssetsState.effects.length / 3) * (self.cell-height + 8px) - 8px;
+            for effect[index] in AssetsState.effects: effect-cell := Rectangle {
+                property <bool> current: AssetsState.effect-targets > 0 && AssetsState.current-effect == effect.value;
+                x: mod(index, 3) * (effects-grid.cell + 8px);
+                y: floor(index / 3) * (effects-grid.cell-height + 8px);
+                width: effects-grid.cell;
+                height: effects-grid.cell-height;
+                border-radius: 6px;
+                background: self.current ? Theme.accent.with-alpha(0.1) : effect-touch.has-hover ? Theme.hover : transparent;
+                VerticalLayout {
+                    padding: 4px;
+                    spacing: 4px;
+                    Rectangle {
+                        height: self.width * 9 / 16;
+                        border-radius: 4px;
+                        border-width: 2px;
+                        border-color: effect-cell.current ? Theme.accent : transparent;
+                        clip: true;
+                        EffectGlyph { x: 2px; y: 2px; width: parent.width - 4px; height: parent.height - 4px; kind: effect.value; playing: effect-touch.has-hover; }
+                    }
+                    Text { text: effect.label; color: effect-touch.has-hover ? Theme.fg : Theme.muted; font-size: 11px; overflow: elide; }
+                }
+                effect-touch := DragSource { kind: "effect"; id: effect.value; }
+            }
+        }
+        Rectangle { height: 1px; background: Theme.line; }
+        Button {
+            text: "Remove effect";
+            icon: Icons.ban;
+            kind: ButtonKind.outline;
+            size: ButtonSize.sm;
+            stretch: true;
+            enabled: AssetsState.effect-targets > 0 && AssetsState.current-effect != "none";
+            clicked => { AssetsState.action("remove-effect"); }
+        }
+    }
+}
+
+// ------------------------------------------------------------ transitions
+
+component TransitionGlyph inherits Rectangle {
+    in property <string> kind;
+    property <color> a: #4f7cff;
+    property <color> b: #8b6cf6;
+    clip: true;
+    background: root.kind == "fade" ? @linear-gradient(90deg, root.a 0%, root.b 100%)
+        : root.kind == "black" ? @linear-gradient(90deg, root.a 0%, #000000 50%, root.b 100%)
+        : root.kind == "white" ? @linear-gradient(90deg, root.a 0%, #ffffff 50%, root.b 100%)
+        : root.kind == "blur" ? @linear-gradient(90deg, root.a 0%, #6b74f8 50%, root.b 100%)
+        : root.kind == "flash" ? @linear-gradient(90deg, root.a 0%, #ffffff 50%, root.b 100%)
+        : root.kind == "zoom" ? @radial-gradient(circle, root.b 0%, root.b 30%, root.a 31%, root.a 100%)
+        : root.a;
+    // Hard splits (slides, wipes, spin) are two rectangles.
+    if root.kind == "slide-left": Rectangle { x: parent.width / 2; width: parent.width / 2; background: root.b; }
+    if root.kind == "slide-right": Rectangle { x: 0; width: parent.width / 2; background: root.b; }
+    if root.kind == "slide-up": Rectangle { y: parent.height / 2; height: parent.height / 2; background: root.b; }
+    if root.kind == "slide-down": Rectangle { y: 0; height: parent.height / 2; background: root.b; }
+    if root.kind == "wipe-left": Rectangle { x: parent.width * 0.6; width: parent.width * 0.4; background: root.b; }
+    if root.kind == "wipe-right": Rectangle { x: 0; width: parent.width * 0.4; background: root.b; }
+    if root.kind == "spin": Rectangle { x: parent.width / 2; width: parent.width / 2; background: root.b; }
+}
+
+component TransitionsPanel inherits ScrollView {
+    content-width: self.visible-width;
+    content-height: content.preferred-height;
+    content := VerticalLayout {
+        width: root.visible-width;
+        padding: 12px;
+        spacing: 12px;
+        transitions-grid := Rectangle {
+            property <length> cell: (self.width - 16px) / 3;
+            property <length> cell-height: self.cell * 9 / 16 + 30px;
+            height: ceil(AssetsState.transitions.length / 3) * (self.cell-height + 8px) - 8px;
+            for preset[index] in AssetsState.transitions: preset-cell := Rectangle {
+                property <bool> current: AssetsState.has-seam && AssetsState.seam-kind == preset.value;
+                x: mod(index, 3) * (transitions-grid.cell + 8px);
+                y: floor(index / 3) * (transitions-grid.cell-height + 8px);
+                width: transitions-grid.cell;
+                height: transitions-grid.cell-height;
+                border-radius: 6px;
+                background: self.current ? Theme.accent.with-alpha(0.1) : preset-touch.has-hover ? Theme.hover : transparent;
+                VerticalLayout {
+                    padding: 4px;
+                    spacing: 4px;
+                    Rectangle {
+                        height: self.width * 9 / 16;
+                        border-radius: 4px;
+                        border-width: 2px;
+                        border-color: preset-cell.current ? Theme.accent : transparent;
+                        clip: true;
+                        TransitionGlyph { x: 2px; y: 2px; width: parent.width - 4px; height: parent.height - 4px; kind: preset.value; }
+                    }
+                    Text { text: preset.label; color: preset-touch.has-hover ? Theme.fg : Theme.muted; font-size: 11px; overflow: elide; }
+                }
+                preset-touch := DragSource { kind: "transition"; id: preset.value; }
+            }
+        }
+        Rectangle { height: 1px; background: Theme.line; }
+        if AssetsState.seam-label != "": Text { text: AssetsState.seam-label; color: Theme.muted; font-size: Theme.text-2xs; }
+        HorizontalLayout {
+            spacing: 8px;
+            Button { text: "Remove"; kind: ButtonKind.outline; size: ButtonSize.sm; stretch: true; enabled: AssetsState.has-seam && AssetsState.seam-kind != "none"; clicked => { AssetsState.action("remove-transition"); } }
+            Button { text: "Apply to all cuts"; kind: ButtonKind.outline; size: ButtonSize.sm; stretch: true; enabled: AssetsState.can-apply-all; clicked => { AssetsState.action("transition-all"); } }
+        }
+        if !AssetsState.has-seam: Text {
+            text: "Select a clip that touches another clip, or drag a transition onto the cut between two clips.";
+            color: Theme.faint;
+            font-size: Theme.text-2xs;
+            wrap: word-wrap;
+        }
+    }
+}
+
+// ------------------------------------------------------------ captions
+
+export global CaptionsState {
+    in property <[Choice]> sources;
+    in property <string> source;
+    in property <string> language: "auto";
+    in property <string> words: "3";
+    in property <[Choice]> styles;
+    in property <string> style: "caption-default";
+    in property <string> position: "bottom";
+    /// Speech recognition is in the linked FFmpeg (or runs in the cloud).
+    in property <bool> available: true;
+    /// Captions come from OpenRouter instead of the local model.
+    in property <bool> cloud;
+    in property <bool> model-installed;
+    in property <string> model-note;
+    in property <bool> downloading;
+    in property <float> download-fraction;
+    in property <bool> busy;
+    in property <float> fraction;
+    in property <string> remaining;
+    callback choose(string, string);
+    callback download();
+    callback generate();
+    callback cancel();
+    callback import-srt();
+    callback export-srt();
+}
+
+component ProgressBar inherits Rectangle {
+    in property <float> fraction;
+    height: 6px;
+    border-radius: 3px;
+    background: Theme.line;
+    clip: true;
+    Rectangle {
+        x: 0;
+        width: parent.width * max(0, min(1, root.fraction));
+        border-radius: 3px;
+        background: Theme.accent;
+    }
+}
+
+component CaptionsPanel inherits ScrollView {
+    content-width: self.visible-width;
+    content-height: content.preferred-height;
+    content := VerticalLayout {
+        width: root.visible-width;
+        padding: 12px;
+        spacing: 12px;
+        alignment: start;
+        Rectangle {
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Theme.line;
+            height: auto-section.preferred-height;
+            auto-section := VerticalLayout {
+                padding: 12px;
+                spacing: 10px;
+                HorizontalLayout {
+                    spacing: 8px;
+                    VerticalLayout { alignment: center; Icon { source: Icons.captions; size: 16px; colorize: Theme.accent; } }
+                    PanelTitle { text: "Auto captions"; vertical-alignment: center; }
+                }
+                if CaptionsState.sources.length == 0: Text {
+                    text: "Add a video with sound or an audio clip to the timeline first.";
+                    color: Theme.muted;
+                    font-size: Theme.text-2xs;
+                    wrap: word-wrap;
+                }
+                if CaptionsState.sources.length > 0: VerticalLayout {
+                    spacing: 10px;
+                    Field {
+                        label: "Speech from";
+                        Select { horizontal-stretch: 1; current: CaptionsState.source; options: CaptionsState.sources; selected(value) => { CaptionsState.choose("source", value); } }
+                    }
+                    Field {
+                        label: "Language";
+                        Select {
+                            horizontal-stretch: 1;
+                            current: CaptionsState.language;
+                            options: [
+                                { value: "auto", label: "Detect automatically" }, { value: "en", label: "English" }, { value: "pl", label: "Polish" },
+                                { value: "de", label: "German" }, { value: "es", label: "Spanish" }, { value: "fr", label: "French" },
+                                { value: "it", label: "Italian" }, { value: "pt", label: "Portuguese" }, { value: "uk", label: "Ukrainian" },
+                                { value: "ru", label: "Russian" }, { value: "nl", label: "Dutch" }, { value: "tr", label: "Turkish" },
+                                { value: "ja", label: "Japanese" }, { value: "ko", label: "Korean" }, { value: "zh", label: "Chinese" },
+                            ];
+                            selected(value) => { CaptionsState.choose("language", value); }
+                        }
+                    }
+                    Field {
+                        label: "Words";
+                        Segmented {
+                            horizontal-stretch: 1;
+                            current: CaptionsState.words;
+                            options: [{ value: "1", label: "1" }, { value: "2", label: "2" }, { value: "3", label: "3" }, { value: "5", label: "5" }, { value: "8", label: "8" }];
+                            selected(value) => { CaptionsState.choose("words", value); }
+                        }
+                    }
+                    Field {
+                        label: "Style";
+                        Select { horizontal-stretch: 1; current: CaptionsState.style; options: CaptionsState.styles; selected(value) => { CaptionsState.choose("style", value); } }
+                    }
+                    Field {
+                        label: "Position";
+                        Segmented {
+                            horizontal-stretch: 1;
+                            current: CaptionsState.position;
+                            options: [{ value: "top", label: "Top" }, { value: "middle", label: "Middle" }, { value: "bottom", label: "Bottom" }];
+                            selected(value) => { CaptionsState.choose("position", value); }
+                        }
+                    }
+                    if !CaptionsState.available: Rectangle {
+                        height: warn-text.preferred-height + 16px;
+                        border-radius: 6px;
+                        background: Theme.warn.with-alpha(0.1);
+                        warn-text := Text {
+                            x: 8px;
+                            width: parent.width - 16px;
+                            text: "The linked FFmpeg has no speech recognition (whisper). Use an FFmpeg 8 full build.";
+                            color: Theme.warn;
+                            font-size: Theme.text-2xs;
+                            wrap: word-wrap;
+                        }
+                    }
+                    if CaptionsState.cloud && !CaptionsState.model-installed: Text {
+                        text: "Add an OpenRouter key in Settings to use cloud captions.";
+                        color: Theme.warn;
+                        font-size: Theme.text-2xs;
+                        wrap: word-wrap;
+                    }
+                    if !CaptionsState.cloud && CaptionsState.available && !CaptionsState.model-installed: Rectangle {
+                        border-radius: 6px;
+                        background: Theme.app;
+                        height: model-box.preferred-height;
+                        model-box := VerticalLayout {
+                            padding: 10px;
+                            spacing: 8px;
+                            Text { text: CaptionsState.model-note; color: Theme.muted; font-size: Theme.text-2xs; wrap: word-wrap; }
+                            if !CaptionsState.downloading: Button { text: "Download model"; icon: Icons.download; kind: ButtonKind.outline; size: ButtonSize.sm; stretch: true; clicked => { CaptionsState.download(); } }
+                            if CaptionsState.downloading: ProgressBar { fraction: CaptionsState.download-fraction; }
+                        }
+                    }
+                    if !CaptionsState.busy: Button {
+                        text: "Generate captions";
+                        kind: ButtonKind.primary;
+                        stretch: true;
+                        enabled: CaptionsState.available && CaptionsState.model-installed && CaptionsState.source != "";
+                        clicked => { CaptionsState.generate(); }
+                    }
+                    if CaptionsState.busy: VerticalLayout {
+                        spacing: 6px;
+                        ProgressBar { fraction: CaptionsState.fraction; }
+                        HorizontalLayout {
+                            Text { horizontal-stretch: 1; text: "Listening… " + round(CaptionsState.fraction * 100) + "%"; color: Theme.muted; font-size: Theme.text-2xs; }
+                            Text { text: CaptionsState.remaining; color: Theme.muted; font-size: Theme.text-2xs; }
+                        }
+                        Button { text: "Stop"; kind: ButtonKind.ghost; size: ButtonSize.sm; stretch: true; clicked => { CaptionsState.cancel(); } }
+                    }
+                }
+            }
+        }
+        Rectangle {
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Theme.line;
+            height: files-section.preferred-height;
+            files-section := VerticalLayout {
+                padding: 12px;
+                spacing: 8px;
+                PanelTitle { text: "Subtitle files"; }
+                HorizontalLayout {
+                    spacing: 8px;
+                    Button { text: "Import .srt"; icon: Icons.file-up; kind: ButtonKind.outline; size: ButtonSize.sm; stretch: true; clicked => { CaptionsState.import-srt(); } }
+                    Button { text: "Export .srt"; icon: Icons.file-down; kind: ButtonKind.outline; size: ButtonSize.sm; stretch: true; clicked => { CaptionsState.export-srt(); } }
+                }
+            }
+        }
+    }
+}
+
+export component AssetPanel inherits Surface {
+    VerticalLayout {
+        Rectangle {
+            height: 68px;
+            HorizontalLayout {
+                padding: 6px;
+                spacing: 2px;
+                PanelTab { horizontal-stretch: 1; id: "media"; label: "Media"; icon: Icons.clapperboard; }
+                PanelTab { horizontal-stretch: 1; id: "text"; label: "Text"; icon: Icons.type; }
+                PanelTab { horizontal-stretch: 1; id: "stickers"; label: "Stickers"; icon: Icons.smile; }
+                PanelTab { horizontal-stretch: 1; id: "effects"; label: "Effects"; icon: Icons.sparkles; }
+                PanelTab { horizontal-stretch: 1; id: "transitions"; label: "Transitions"; icon: Icons.blend; }
+                PanelTab { horizontal-stretch: 1; id: "captions"; label: "Captions"; icon: Icons.captions; }
+            }
+            Rectangle { y: parent.height - 1px; height: 1px; background: Theme.line; }
+        }
+        if EditorState.panel == "media": MediaPanel { vertical-stretch: 1; }
+        if EditorState.panel == "text": TextPanel { vertical-stretch: 1; }
+        if EditorState.panel == "stickers": StickersPanel { vertical-stretch: 1; }
+        if EditorState.panel == "effects": EffectsPanel { vertical-stretch: 1; }
+        if EditorState.panel == "transitions": TransitionsPanel { vertical-stretch: 1; }
+        if EditorState.panel == "captions": CaptionsPanel { vertical-stretch: 1; }
+    }
+}

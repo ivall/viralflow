@@ -1,0 +1,127 @@
+// Design tokens, identical to the Tauri app's Tailwind theme.
+
+/// What differs between operating systems (set from Rust at start).
+export global Platform {
+    /// macOS: window buttons on the left, ⌘ in shortcut labels.
+    in property <bool> mac;
+    /// Name of the shortcut modifier key.
+    out property <string> mod: root.mac ? "⌘" : "Ctrl";
+}
+
+export global Theme {
+    out property <color> app: #0d0d10;
+    out property <color> panel: #17171b;
+    out property <color> raised: #212126;
+    out property <color> hover: #2a2a30;
+    out property <color> line: #27272d;
+    out property <color> line-strong: #3a3a42;
+    out property <color> fg: #ececf1;
+    out property <color> muted: #a0a0ab;
+    out property <color> faint: #6c6c78;
+    out property <color> accent: #6b97e8;
+    out property <color> accent-hover: #82a8ee;
+    out property <color> accent-ink: #ffffff;
+    out property <color> danger: #f0606b;
+    out property <color> warn: #e9b44c;
+    out property <color> ok: #4fd18b;
+    /// Thin border of floating panels (white at 5%).
+    out property <color> surface-border: #ffffff0d;
+
+    out property <color> clip-video: #4f7cff;
+    out property <color> clip-image: #8b6cf6;
+    out property <color> clip-audio: #2fb38a;
+    out property <color> clip-text: #e2a03f;
+    out property <color> clip-shape: #d16ba5;
+
+    out property <length> text-2xs: 12px;
+    out property <length> text-xs: 13px;
+    out property <length> text-sm: 14px;
+    out property <length> text-lg: 18px;
+
+    out property <length> radius-panel: 12px;
+    out property <length> radius: 8px;
+    out property <length> label-width: 96px;
+    out property <duration> fast: 120ms;
+}
+
+export global Icons {
+    out property <image> align-center: @image-url("icons/align-center.svg");
+    out property <image> align-left: @image-url("icons/align-left.svg");
+    out property <image> align-right: @image-url("icons/align-right.svg");
+    out property <image> arrow-left: @image-url("icons/arrow-left.svg");
+    out property <image> arrow-left-to-line: @image-url("icons/arrow-left-to-line.svg");
+    out property <image> arrow-right-to-line: @image-url("icons/arrow-right-to-line.svg");
+    out property <image> audio-lines: @image-url("icons/audio-lines.svg");
+    out property <image> ban: @image-url("icons/ban.svg");
+    out property <image> blend: @image-url("icons/blend.svg");
+    out property <image> captions: @image-url("icons/captions.svg");
+    out property <image> case-upper: @image-url("icons/case-upper.svg");
+    out property <image> check: @image-url("icons/check.svg");
+    out property <image> chevron-down: @image-url("icons/chevron-down.svg");
+    out property <image> chevron-left: @image-url("icons/chevron-left.svg");
+    out property <image> chevron-right: @image-url("icons/chevron-right.svg");
+    out property <image> circle-alert: @image-url("icons/circle-alert.svg");
+    out property <image> circle-check: @image-url("icons/circle-check.svg");
+    out property <image> clapperboard: @image-url("icons/clapperboard.svg");
+    out property <image> copy: @image-url("icons/copy.svg");
+    out property <image> crop: @image-url("icons/crop.svg");
+    out property <image> diamond: @image-url("icons/diamond.svg");
+    out property <image> download: @image-url("icons/download.svg");
+    out property <image> expand: @image-url("icons/expand.svg");
+    out property <image> eye: @image-url("icons/eye.svg");
+    out property <image> eye-off: @image-url("icons/eye-off.svg");
+    out property <image> file-down: @image-url("icons/file-down.svg");
+    out property <image> file-up: @image-url("icons/file-up.svg");
+    out property <image> film: @image-url("icons/film.svg");
+    out property <image> flip-horizontal: @image-url("icons/flip-horizontal-2.svg");
+    out property <image> flip-vertical: @image-url("icons/flip-vertical-2.svg");
+    out property <image> folder-open: @image-url("icons/folder-open.svg");
+    out property <image> grid: @image-url("icons/grid-3x3.svg");
+    out property <image> grip-vertical: @image-url("icons/grip-vertical.svg");
+    out property <image> image: @image-url("icons/image.svg");
+    out property <image> info: @image-url("icons/info.svg");
+    out property <image> italic: @image-url("icons/italic.svg");
+    out property <image> keyboard: @image-url("icons/keyboard.svg");
+    out property <image> link: @image-url("icons/link.svg");
+    out property <image> loader: @image-url("icons/loader-circle.svg");
+    out property <image> lock: @image-url("icons/lock.svg");
+    out property <image> magnet: @image-url("icons/magnet.svg");
+    out property <image> maximize: @image-url("icons/maximize-2.svg");
+    out property <image> mic: @image-url("icons/mic.svg");
+    out property <image> more-horizontal: @image-url("icons/more-horizontal.svg");
+    out property <image> music: @image-url("icons/music.svg");
+    out property <image> pause: @image-url("icons/pause.svg");
+    out property <image> pencil: @image-url("icons/pencil.svg");
+    out property <image> play: @image-url("icons/play.svg");
+    out property <image> plus: @image-url("icons/plus.svg");
+    out property <image> redo: @image-url("icons/redo-2.svg");
+    out property <image> refresh: @image-url("icons/refresh-cw.svg");
+    out property <image> rotate-ccw: @image-url("icons/rotate-ccw.svg");
+    out property <image> rotate-cw: @image-url("icons/rotate-cw.svg");
+    out property <image> scissors: @image-url("icons/scissors.svg");
+    out property <image> search: @image-url("icons/search.svg");
+    out property <image> settings: @image-url("icons/settings.svg");
+    out property <image> shapes: @image-url("icons/shapes.svg");
+    out property <image> shrink: @image-url("icons/shrink.svg");
+    out property <image> skip-back: @image-url("icons/skip-back.svg");
+    out property <image> skip-forward: @image-url("icons/skip-forward.svg");
+    out property <image> smile: @image-url("icons/smile.svg");
+    out property <image> sparkles: @image-url("icons/sparkles.svg");
+    out property <image> square: @image-url("icons/square.svg");
+    out property <image> step-back: @image-url("icons/step-back.svg");
+    out property <image> step-forward: @image-url("icons/step-forward.svg");
+    out property <image> trash: @image-url("icons/trash-2.svg");
+    out property <image> triangle-alert: @image-url("icons/triangle-alert.svg");
+    out property <image> type: @image-url("icons/type.svg");
+    out property <image> undo: @image-url("icons/undo-2.svg");
+    out property <image> unlock: @image-url("icons/unlock.svg");
+    out property <image> upload: @image-url("icons/upload.svg");
+    out property <image> volume: @image-url("icons/volume-2.svg");
+    out property <image> volume-x: @image-url("icons/volume-x.svg");
+    out property <image> wand: @image-url("icons/wand-sparkles.svg");
+    out property <image> x: @image-url("icons/x.svg");
+    out property <image> zoom-in: @image-url("icons/zoom-in.svg");
+    out property <image> zoom-out: @image-url("icons/zoom-out.svg");
+    out property <image> layers: @image-url("icons/layers.svg");
+    out property <image> app-icon: @image-url("../../assets/app-icon.png");
+}

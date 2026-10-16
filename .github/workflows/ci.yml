@@ -1,4 +1,6 @@
-# Fast checks on every push to main and on pull requests. Builds no installers.
+# Checks on every push to main and on pull requests: formatting, clippy and
+# the tests of the whole workspace on Windows, Linux and macOS. Builds no
+# installers (see release.yml).
 name: CI
 
 on:
@@ -16,60 +18,97 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  CARGO_TERM_COLOR: always
+  # The FFmpeg version every platform builds and tests against.
+  FFMPEG_WINDOWS: https://github.com/GyanD/codexffmpeg/releases/download/8.1.2/ffmpeg-8.1.2-full_build-shared.7z
+
 jobs:
-  frontend:
-    name: Frontend (types, tests, build)
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm run typecheck
-      - run: npm test
-      - run: npx vite build
-
-  rust:
-    name: Rust (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest, ubuntu-22.04]
+  windows:
+    name: Windows
+    runs-on: windows-latest
+    env:
+      # LLVM is preinstalled on the runner; libclang generates the libav bindings.
+      LIBCLANG_PATH: C:\Program Files\LLVM\bin
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install Linux dependencies
-        if: runner.os == 'Linux'
+      # FFmpeg 8 "shared" build (headers, import libraries and DLLs; includes whisper).
+      - name: FFmpeg
+        shell: pwsh
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev libdbus-1-dev patchelf ffmpeg
+          Invoke-WebRequest $env:FFMPEG_WINDOWS -OutFile ffmpeg.7z
+          7z x ffmpeg.7z -offmpeg-download | Out-Null
+          $dir = (Get-ChildItem ffmpeg-download -Directory | Select-Object -First 1).FullName
+          "FFMPEG_DIR=$dir" | Out-File -Append $env:GITHUB_ENV
+          "$dir\bin" | Out-File -Append $env:GITHUB_PATH
 
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
 
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
-
-      # tauri::generate_context! expects the frontend folder to exist.
-      - name: Placeholder frontend
-        shell: bash
-        run: mkdir -p dist && echo '<!doctype html><title>ci</title>' > dist/index.html
 
       - name: Formatting
-        working-directory: src-tauri
-        run: cargo fmt --check
+        run: cargo fmt --all --check
 
       - name: Clippy
-        working-directory: src-tauri
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
-      # The export test renders a real video when FFmpeg is installed (Linux runner)
-      # and is skipped otherwise.
+      # Media tests make their fixtures with the ffmpeg command line (on PATH above).
       - name: Tests
-        working-directory: src-tauri
-        run: cargo test
+        run: cargo test --workspace
+
+  linux:
+    name: Linux
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: System packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang libclang-dev pkg-config libxkbcommon-dev libfontconfig1-dev libasound2-dev libdbus-1-dev libwayland-dev
+
+      - name: FFmpeg
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash scripts/ci/ffmpeg-linux.sh
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Tests
+        run: cargo test --workspace
+
+  macos:
+    name: macOS
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: FFmpeg
+        run: |
+          brew install ffmpeg@8 pkg-config
+          prefix="$(brew --prefix ffmpeg@8)"
+          echo "FFMPEG_DIR=$prefix" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=$prefix/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "$prefix/bin" >> "$GITHUB_PATH"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Tests
+        run: cargo test --workspace

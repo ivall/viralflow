@@ -1,0 +1,347 @@
+import "../../assets/fonts/Inter.ttf";
+import "../../assets/fonts/Anton-Regular.ttf";
+import "../../assets/fonts/ArchivoBlack-Regular.ttf";
+import "../../assets/fonts/BarlowCondensed-Bold.ttf";
+import "../../assets/fonts/BarlowCondensed-Regular.ttf";
+import "../../assets/fonts/BebasNeue-Regular.ttf";
+import "../../assets/fonts/DMSans.ttf";
+import "../../assets/fonts/Manrope.ttf";
+import "../../assets/fonts/Montserrat.ttf";
+import "../../assets/fonts/Oswald.ttf";
+import "../../assets/fonts/Poppins-Bold.ttf";
+import "../../assets/fonts/Poppins-Regular.ttf";
+import "../../assets/fonts/RobotoCondensed.ttf";
+import "../../assets/fonts/Rubik.ttf";
+
+import { Theme, Icons, Platform } from "theme.slint";
+import { Choice, Button, ButtonKind, ButtonSize, Toaster, Toast, ToastTone, TextField, Menu, MenuEntry, Icon, Spinner } from "widgets.slint";
+import { HomeView, HomeState, ProjectCard, AspectCard } from "home.slint";
+import { AutoEditState, FileRow, RowState } from "autoedit.slint";
+import { SettingsView, SettingsState, SpeechModel, ModelRow } from "settings.slint";
+import { EditorView, EditorState, TimelineState, InspectorState, AssetsState, DragState, ExportState, ExportPhase, CaptionsState } from "editor/editor.slint";
+import { AssetTile, PresetCard, StickerGroup, ShapeCard } from "editor/assets.slint";
+import { ItemInfo, TransformData, FrameData, TextData, ShapeData, AdjustData, AudioData, SpeedData, AnimationData, ProjectData, Stat } from "editor/inspector.slint";
+import { TrackRow, ClipView, KeyMark, SeamView, Tick } from "editor/timeline.slint";
+import { SaveState, Handle, PointerPhase } from "editor/state.slint";
+
+export { Theme, Icons, Platform, HomeState, ProjectCard, AspectCard, Toast, ToastTone, EditorState, SaveState, Handle, PointerPhase, MenuEntry, TimelineState, TrackRow, ClipView, KeyMark, SeamView, Tick, InspectorState, ItemInfo, TransformData, FrameData, TextData, ShapeData, AdjustData, AudioData, SpeedData, AnimationData, ProjectData, Stat, Choice, AssetsState, DragState, AssetTile, PresetCard, StickerGroup, ShapeCard, ExportState, ExportPhase, CaptionsState, AutoEditState, FileRow, RowState, SettingsState, SpeechModel, ModelRow }
+
+export enum Page { home, editor, settings }
+
+export global AppState {
+    in-out property <Page> page: Page.home;
+    in property <bool> maximized;
+    in property <[Toast]> toasts;
+    callback drag-window();
+    callback minimize();
+    callback toggle-maximize();
+    callback close();
+    /// Resize from an edge: 0 n, 1 ne, 2 e, 3 se, 4 s, 5 sw, 6 w, 7 nw.
+    callback resize(int);
+    callback dismiss-toast(int);
+    callback toast-action(int);
+}
+
+component WindowButton inherits Rectangle {
+    in property <int> kind; // 0 minimize, 1 maximize/restore, 2 close
+    callback clicked;
+    width: 46px;
+    background: touch.has-hover ? (root.kind == 2 ? #c42b1c : #ffffff12) : transparent;
+    property <brush> ink: touch.has-hover ? (root.kind == 2 ? #ffffff : Theme.fg) : Theme.muted;
+    if root.kind == 0: Path {
+        width: 10px;
+        height: 10px;
+        viewbox-width: 10;
+        viewbox-height: 10;
+        commands: "M0 5 L10 5";
+        stroke: root.ink;
+        stroke-width: 1px;
+    }
+    if root.kind == 1 && !AppState.maximized: Path {
+        width: 10px;
+        height: 10px;
+        viewbox-width: 10;
+        viewbox-height: 10;
+        commands: "M0.5 0.5 L9.5 0.5 L9.5 9.5 L0.5 9.5 Z";
+        stroke: root.ink;
+        stroke-width: 1px;
+    }
+    if root.kind == 1 && AppState.maximized: Path {
+        width: 10px;
+        height: 10px;
+        viewbox-width: 10;
+        viewbox-height: 10;
+        commands: "M2.5 2.5 L2.5 0.5 L9.5 0.5 L9.5 7.5 L7.5 7.5 M0.5 2.5 L7.5 2.5 L7.5 9.5 L0.5 9.5 Z";
+        stroke: root.ink;
+        stroke-width: 1px;
+    }
+    if root.kind == 2: Path {
+        width: 10px;
+        height: 10px;
+        viewbox-width: 10;
+        viewbox-height: 10;
+        commands: "M0 0 L10 10 M10 0 L0 10";
+        stroke: root.ink;
+        stroke-width: 1px;
+    }
+    touch := TouchArea { clicked => { root.clicked(); } }
+}
+
+/// Project name (click to rename) and save state.
+component EditorTitle inherits HorizontalLayout {
+    property <bool> editing;
+    spacing: 8px;
+    alignment: center;
+    if !root.editing: VerticalLayout {
+        alignment: center;
+        Rectangle {
+            height: 28px;
+            width: min(420px, name.preferred-width + 16px);
+            border-radius: 6px;
+            background: name-touch.has-hover ? Theme.hover : transparent;
+            name := Text {
+                x: 8px;
+                width: parent.width - 16px;
+                text: EditorState.name;
+                color: Theme.fg;
+                font-size: Theme.text-xs;
+                font-weight: 600;
+                overflow: elide;
+                vertical-alignment: center;
+                horizontal-alignment: center;
+            }
+            name-touch := TouchArea { clicked => { root.editing = true; } }
+        }
+    }
+    if root.editing: VerticalLayout {
+        alignment: center;
+        TextField {
+            width: 288px;
+            height: 28px;
+            text: EditorState.name;
+            init => { self.focus-input(); self.select-all(); }
+            accepted(value) => { EditorState.rename(value); root.editing = false; }
+            focus-lost(value) => { EditorState.rename(value); root.editing = false; }
+        }
+    }
+    HorizontalLayout {
+        spacing: 4px;
+        alignment: center;
+        if EditorState.save-state == SaveState.saving: VerticalLayout { alignment: center; Spinner { size: 12px; colorize: Theme.faint; } }
+        if EditorState.save-state == SaveState.saved: VerticalLayout { alignment: center; Icon { source: Icons.check; size: 12px; colorize: Theme.faint; } }
+        if EditorState.save-state == SaveState.error: VerticalLayout { alignment: center; Icon { source: Icons.circle-alert; size: 12px; colorize: Theme.danger; } }
+        Text {
+            text: EditorState.save-state == SaveState.saved ? "Saved" : EditorState.save-state == SaveState.saving ? "Saving…" : EditorState.save-state == SaveState.dirty ? "Unsaved changes" : "Not saved";
+            color: EditorState.save-state == SaveState.error ? Theme.danger : Theme.faint;
+            font-size: Theme.text-2xs;
+            vertical-alignment: center;
+        }
+    }
+}
+
+/// macOS window buttons: close, minimise and zoom on the left.
+component TrafficLight inherits Rectangle {
+    in property <color> tint;
+    callback clicked;
+    width: 12px;
+    height: 12px;
+    border-radius: 6px;
+    background: touch.has-hover ? root.tint.brighter(0.1) : root.tint;
+    border-width: 0.5px;
+    border-color: #00000033;
+    touch := TouchArea { clicked => { root.clicked(); } }
+}
+
+component TrafficLights inherits HorizontalLayout {
+    spacing: 8px;
+    padding-left: 14px;
+    padding-right: 6px;
+    VerticalLayout { alignment: center; TrafficLight { tint: #ff5f57; clicked => { AppState.close(); } } }
+    VerticalLayout { alignment: center; TrafficLight { tint: #febc2e; clicked => { AppState.minimize(); } } }
+    VerticalLayout { alignment: center; TrafficLight { tint: #28c840; clicked => { AppState.toggle-maximize(); } } }
+}
+
+/// Custom window title bar; each page fills the left, centre and right slots.
+component TitleBar inherits Rectangle {
+    height: 44px;
+    background: Theme.app;
+    drag := TouchArea {
+        pointer-event(event) => {
+            if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+                AppState.drag-window();
+            }
+        }
+        double-clicked => { AppState.toggle-maximize(); }
+    }
+    HorizontalLayout {
+        if Platform.mac: TrafficLights { }
+        HorizontalLayout {
+            horizontal-stretch: 1;
+            padding-left: Platform.mac ? 4px : 12px;
+            spacing: 8px;
+            if !Platform.mac: VerticalLayout {
+                alignment: center;
+                Image { source: Icons.app-icon; width: 18px; height: 18px; }
+            }
+            if AppState.page == Page.home: Text {
+                text: "ViralFlow";
+                color: Theme.fg;
+                font-size: Theme.text-xs;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
+            if AppState.page == Page.editor: VerticalLayout {
+                alignment: center;
+                Button {
+                    text: "Projects";
+                    icon: Icons.arrow-left;
+                    kind: ButtonKind.ghost;
+                    size: ButtonSize.sm;
+                    clicked => { EditorState.back(); }
+                }
+            }
+            if AppState.page == Page.settings: VerticalLayout {
+                alignment: center;
+                Button {
+                    text: "Back";
+                    icon: Icons.arrow-left;
+                    kind: ButtonKind.ghost;
+                    size: ButtonSize.sm;
+                    clicked => { AppState.page = Page.home; }
+                }
+            }
+            Rectangle { horizontal-stretch: 1; }
+        }
+        if AppState.page == Page.editor: EditorTitle { }
+        if AppState.page == Page.settings: Text {
+            text: "Settings";
+            color: Theme.fg;
+            font-size: Theme.text-xs;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+        HorizontalLayout {
+            horizontal-stretch: 1;
+            alignment: end;
+            spacing: 6px;
+            if AppState.page == Page.home: VerticalLayout {
+                alignment: center;
+                padding-right: 8px;
+                Button {
+                    text: "Settings";
+                    icon: Icons.settings;
+                    kind: ButtonKind.ghost;
+                    size: ButtonSize.sm;
+                    clicked => { AppState.page = Page.settings; }
+                }
+            }
+            if AppState.page == Page.editor: HorizontalLayout {
+                spacing: 6px;
+                padding-right: 8px;
+                VerticalLayout {
+                    alignment: center;
+                    more := Button {
+                        icon: Icons.more-horizontal;
+                        kind: ButtonKind.ghost;
+                        size: ButtonSize.sm;
+                        clicked => { more-menu.open(self.x - 200px + self.width, self.height + 4px); }
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    export-button := Button {
+                        text: "Export";
+                        icon: Icons.download;
+                        kind: ButtonKind.primary;
+                        size: ButtonSize.sm;
+                        enabled: !EditorState.loading && EditorState.load-error == "";
+                        clicked => { EditorState.export(); }
+                    }
+                }
+                more-menu := Menu {
+                    menu-width: 220px;
+                    entries: [
+                        { id: "import", label: "Import media…", shortcut: (Platform.mod + "+I"), enabled: true },
+                        { id: "save-file", label: "Save project file…", enabled: true },
+                        { id: "shortcuts", label: "Keyboard shortcuts", enabled: true },
+                        { separator: true },
+                        { id: "settings", label: "Settings", enabled: true },
+                    ];
+                    activated(id) => { EditorState.more(id); }
+                }
+            }
+            if !Platform.mac: WindowButton { kind: 0; clicked => { AppState.minimize(); } }
+            if !Platform.mac: WindowButton { kind: 1; clicked => { AppState.toggle-maximize(); } }
+            if !Platform.mac: WindowButton { kind: 2; clicked => { AppState.close(); } }
+        }
+    }
+    // While a dialog is open the bar is dimmed like the dialog's backdrop and
+    // its controls are off (leaving the editor mid-export, opening the export
+    // twice); the window can still be moved, minimised and closed.
+    property <bool> modal: ExportState.open || EditorState.shortcuts-open || AutoEditState.open || SettingsState.picker-open;
+    if root.modal: Rectangle {
+        // The window buttons stay usable: right on Windows and Linux, left on macOS.
+        x: Platform.mac ? 64px : 0;
+        width: parent.width - (Platform.mac ? 64px : 3 * 46px);
+        background: #00000099;
+        TouchArea {
+            pointer-event(event) => {
+                if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+                    AppState.drag-window();
+                }
+            }
+        }
+    }
+}
+
+component ResizeEdge inherits TouchArea {
+    in property <int> direction;
+    pointer-event(event) => {
+        if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+            AppState.resize(root.direction);
+        }
+    }
+}
+
+export component AppWindow inherits Window {
+    in property <string> window-title: "ViralFlow";
+    title: root.window-title;
+    icon: Icons.app-icon;
+    no-frame: true;
+    preferred-width: 1440px;
+    preferred-height: 900px;
+    min-width: 1100px;
+    min-height: 680px;
+    background: Theme.app;
+    default-font-family: "Inter";
+    default-font-size: Theme.text-xs;
+
+    VerticalLayout {
+        if !(AppState.page == Page.editor && EditorState.fullscreen): TitleBar { }
+        Rectangle {
+            vertical-stretch: 1;
+            if AppState.page == Page.home: HomeView { }
+            if AppState.page == Page.settings: SettingsView { }
+            if AppState.page == Page.editor: EditorView {
+                timeline-height: root.height * 0.36;
+            }
+        }
+    }
+
+    Toaster {
+        x: parent.width - self.width - 16px;
+        y: parent.height - self.preferred-height - 16px;
+        toasts: AppState.toasts;
+        dismiss(id) => { AppState.dismiss-toast(id); }
+        action(id) => { AppState.toast-action(id); }
+    }
+
+    if !AppState.maximized: ResizeEdge { x: 6px; y: 0; width: parent.width - 12px; height: 4px; direction: 0; mouse-cursor: n-resize; }
+    if !AppState.maximized: ResizeEdge { x: parent.width - 6px; y: 0; width: 6px; height: 6px; direction: 1; mouse-cursor: ne-resize; }
+    if !AppState.maximized: ResizeEdge { x: parent.width - 4px; y: 6px; width: 4px; height: parent.height - 12px; direction: 2; mouse-cursor: e-resize; }
+    if !AppState.maximized: ResizeEdge { x: parent.width - 6px; y: parent.height - 6px; width: 6px; height: 6px; direction: 3; mouse-cursor: se-resize; }
+    if !AppState.maximized: ResizeEdge { x: 6px; y: parent.height - 4px; width: parent.width - 12px; height: 4px; direction: 4; mouse-cursor: s-resize; }
+    if !AppState.maximized: ResizeEdge { x: 0; y: parent.height - 6px; width: 6px; height: 6px; direction: 5; mouse-cursor: sw-resize; }
+    if !AppState.maximized: ResizeEdge { x: 0; y: 6px; width: 4px; height: parent.height - 12px; direction: 6; mouse-cursor: w-resize; }
+    if !AppState.maximized: ResizeEdge { x: 0; y: 0; width: 6px; height: 6px; direction: 7; mouse-cursor: nw-resize; }
+}

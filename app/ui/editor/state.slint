@@ -1,0 +1,108 @@
+// Everything the editor shows comes from EditorState (set by Rust); every user
+// action is a callback into Rust.
+
+import { MenuEntry, Choice } from "../widgets.slint";
+
+export enum SaveState { saved, saving, dirty, error }
+
+/// Outline of a selected layer on the canvas (canvas pixels, clockwise from top-left).
+export struct Handle {
+    x0: length, y0: length,
+    x1: length, y1: length,
+    x2: length, y2: length,
+    x3: length, y3: length,
+    rotation: float,
+    primary: bool,
+    locked: bool,
+}
+
+export enum PointerPhase { down, move, up, double }
+
+export global EditorState {
+    in property <string> name;
+    in property <SaveState> save-state;
+    in property <bool> loading;
+    in property <string> load-error;
+
+    // Preview
+    in property <image> frame;
+    in property <length> canvas-width;
+    in property <length> canvas-height;
+    in property <string> format-label;
+    in property <string> aspect-label;
+    in property <bool> empty;
+    in property <[Handle]> handles;
+    in property <length> guide-x: -1px;
+    in property <length> guide-y: -1px;
+    in property <bool> safe-area;
+    in-out property <bool> grid;
+    in property <bool> muted;
+    in property <bool> fullscreen;
+    in-out property <string> panel: "media";
+    in-out property <bool> shortcuts-open;
+    /// Bumped by clicks on the canvas or timeline: keyboard focus goes back to
+    /// the editor, so shortcuts work after typing in a field.
+    in-out property <int> focus-request;
+    /// The asset panel switched (Rust refreshes the panel that became visible).
+    callback panel-changed(string);
+    /// A drag from the panels would land on the preview.
+    in property <bool> drop-preview;
+
+    // Transport
+    in property <bool> playing;
+    in property <string> time-label;
+    in property <string> end-label;
+    in property <float> time;
+    in property <float> end;
+    in property <bool> can-undo;
+    in property <bool> can-redo;
+
+    callback back();
+    callback rename(string);
+    callback export();
+    callback more(string);
+    callback preview-size(length, length);
+    callback canvas-pointer(PointerPhase, length, length, bool, bool);
+    /// The pointer moved over the canvas without a button (sets canvas-cursor).
+    callback canvas-hover(length, length);
+    /// 0 default, 1 move, 2 resize ↘, 3 resize ↗, 4 rotate.
+    in property <int> canvas-cursor;
+    callback toggle-play();
+    callback seek(float);
+    callback step(int);
+    callback go-start();
+    callback go-end();
+    callback set-aspect(string);
+    callback toggle-mute();
+    callback toggle-fullscreen();
+    callback import-media();
+    callback key(string, bool, bool, bool) -> bool;
+}
+
+/// A drag from the asset panels (or files from the OS). Positions are window
+/// coordinates; drop targets report where it is in their own coordinates.
+export global DragState {
+    in property <bool> active;
+    in property <string> label;
+    in property <length> x;
+    in property <length> y;
+    /// Whether the pointer is over a target that accepts the drop.
+    in property <bool> accepted;
+    callback over(string, length, length);
+    callback leave(string);
+}
+
+/// Invisible layer that tells Rust where a drag is over this element.
+export component DropProbe inherits Rectangle {
+    in property <string> target;
+    property <bool> inside: DragState.active
+        && DragState.x >= self.absolute-position.x && DragState.x < self.absolute-position.x + self.width
+        && DragState.y >= self.absolute-position.y && DragState.y < self.absolute-position.y + self.height;
+    property <length> local-x: DragState.x - self.absolute-position.x;
+    property <length> local-y: DragState.y - self.absolute-position.y;
+    changed inside => {
+        if self.inside { DragState.over(root.target, self.local-x, self.local-y); } else { DragState.leave(root.target); }
+    }
+    changed local-x => { if self.inside { DragState.over(root.target, self.local-x, self.local-y); } }
+    changed local-y => { if self.inside { DragState.over(root.target, self.local-x, self.local-y); } }
+}

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.ivall.viralflow</id>
+  <name>ViralFlow</name>
+  <summary>Edit short vertical videos with captions, effects and music</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-only</project_license>
+  <launchable type="desktop-id">viralflow.desktop</launchable>
+  <url type="homepage">https://github.com/ivall/viralflow</url>
+  <description>
+    <p>A local video editor for TikTok, Reels and Shorts: timeline editing, word-by-word captions, effects, transitions and GPU export.</p>
+  </description>
+</component>

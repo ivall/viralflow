@@ -1,0 +1,6 @@
+# Build inputs for the libav bindings (ffmpeg-sys-next). Values set in the
+# environment take precedence; these are the default install locations on
+# Windows (FFmpeg 8 "shared" build with include/ and lib/, and LLVM).
+[env]
+FFMPEG_DIR = { value = "C:/Program Files/ffmpeg", force = false }
+LIBCLANG_PATH = { value = "C:/Program Files/LLVM/bin", force = false }

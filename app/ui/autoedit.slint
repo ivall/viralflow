@@ -1,0 +1,174 @@
+// Auto-edit voiceovers: each voiceover becomes its own video with captions,
+// a background and photos.
+
+import { Theme, Icons } from "theme.slint";
+import { Button, ButtonKind, ButtonSize, Dialog, DialogFooter, Field, Select, Icon, Spinner, Choice, ScrollView } from "widgets.slint";
+import { ColorField } from "pickers.slint";
+
+export enum RowState { none, waiting, working, done, failed }
+
+export struct FileRow {
+    name: string,
+    path: string,
+    state: RowState,
+    detail: string,
+}
+
+export global AutoEditState {
+    in property <bool> open;
+    in property <bool> running;
+    in property <[FileRow]> voices;
+    in property <[FileRow]> backgrounds;
+    in property <[FileRow]> images;
+    /// Photos are matched to the speech by AI (an OpenRouter key is set).
+    in property <bool> ai;
+    in property <string> language: "auto";
+    in property <string> aspect: "9:16";
+    in property <[Choice]> aspects;
+    in property <color> accent: #ffd43b;
+    in property <string> accent-hex: "#ffd43b";
+    in property <string> provider-note;
+    callback add(string);
+    callback remove(string, string);
+    callback choose(string, string);
+    callback accent-picked(color);
+    callback accent-entered(string);
+    callback run();
+    callback close();
+}
+
+component Column inherits Rectangle {
+    in property <string> group;
+    in property <string> title;
+    in property <string> hint;
+    in property <image> icon;
+    in property <[FileRow]> rows;
+    min-height: 200px;
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: Theme.line;
+    background: Theme.app;
+    VerticalLayout {
+        padding: 10px;
+        spacing: 6px;
+        HorizontalLayout {
+            spacing: 8px;
+            VerticalLayout { alignment: center; Icon { source: root.icon; size: 14px; colorize: Theme.accent; } }
+            Text { horizontal-stretch: 1; text: root.title; color: Theme.fg; font-size: Theme.text-xs; font-weight: 600; vertical-alignment: center; }
+            Text { text: root.rows.length; color: Theme.faint; font-size: Theme.text-2xs; vertical-alignment: center; }
+        }
+        ScrollView {
+            vertical-stretch: 1;
+            min-height: 90px;
+            content-width: self.visible-width;
+            VerticalLayout {
+                alignment: start;
+                spacing: 2px;
+                for row in root.rows: Rectangle {
+                    height: 24px;
+                    border-radius: 4px;
+                    background: row-touch.has-hover ? Theme.hover : transparent;
+                    row-touch := TouchArea { }
+                    HorizontalLayout {
+                        padding-left: 6px;
+                        padding-right: 4px;
+                        spacing: 6px;
+                        if row.state == RowState.working: VerticalLayout { alignment: center; Spinner { size: 12px; } }
+                        if row.state == RowState.done: VerticalLayout { alignment: center; Icon { source: Icons.circle-check; size: 12px; colorize: Theme.ok; } }
+                        if row.state == RowState.failed: VerticalLayout { alignment: center; Icon { source: Icons.circle-alert; size: 12px; colorize: Theme.danger; } }
+                        Text {
+                            horizontal-stretch: 1;
+                            text: row.detail != "" && row-touch.has-hover ? row.detail : row.name;
+                            color: row.state == RowState.failed && row-touch.has-hover ? Theme.danger : Theme.fg;
+                            font-size: Theme.text-2xs;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                        if !AutoEditState.running && row-touch.has-hover: VerticalLayout {
+                            alignment: center;
+                            Rectangle {
+                                width: 18px;
+                                height: 18px;
+                                Icon { source: Icons.x; size: 12px; colorize: Theme.muted; }
+                                TouchArea { clicked => { AutoEditState.remove(root.group, row.path); } }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Button { text: "Add files"; kind: ButtonKind.outline; size: ButtonSize.sm; stretch: true; enabled: !AutoEditState.running; clicked => { AutoEditState.add(root.group); } }
+        Text { text: root.hint; color: Theme.faint; font-size: 11px; wrap: word-wrap; }
+    }
+}
+
+export component AutoEditDialog inherits Dialog {
+    title: "Auto-edit voiceovers";
+    description: "Each voiceover becomes its own video with captions, a background and your photos.";
+    card-width: 680px;
+    dismissible: !AutoEditState.running;
+    dismissed => { AutoEditState.close(); }
+
+    VerticalLayout {
+        padding-left: 20px;
+        padding-right: 20px;
+        padding-top: 16px;
+        padding-bottom: 16px;
+        spacing: 16px;
+        HorizontalLayout {
+            spacing: 12px;
+            Column { horizontal-stretch: 1; group: "voice"; title: "Voiceovers"; hint: "One video per file"; icon: Icons.audio-lines; rows: AutoEditState.voices; }
+            Column { horizontal-stretch: 1; group: "background"; title: "Backgrounds"; hint: "Used in turn"; icon: Icons.film; rows: AutoEditState.backgrounds; }
+            Column {
+                horizontal-stretch: 1;
+                group: "image";
+                title: "Photos";
+                hint: AutoEditState.ai ? "Matched to the speech by AI" : "Spread evenly (add an AI key to match by speech)";
+                icon: Icons.image;
+                rows: AutoEditState.images;
+            }
+        }
+        HorizontalLayout {
+            spacing: 12px;
+            Field {
+                horizontal-stretch: 1;
+                label: "Language";
+                Select {
+                    horizontal-stretch: 1;
+                    current: AutoEditState.language;
+                    options: [
+                        { value: "auto", label: "Detect automatically" }, { value: "en", label: "English" }, { value: "pl", label: "Polish" },
+                        { value: "de", label: "German" }, { value: "es", label: "Spanish" }, { value: "fr", label: "French" },
+                    ];
+                    selected(value) => { AutoEditState.choose("language", value); }
+                }
+            }
+            Field {
+                horizontal-stretch: 1;
+                label: "Format";
+                Select { horizontal-stretch: 1; list-width: 260px; current: AutoEditState.aspect; options: AutoEditState.aspects; selected(value) => { AutoEditState.choose("aspect", value); } }
+            }
+        }
+        Field {
+            label: "Accent";
+            ColorField {
+                width: 160px;
+                value: AutoEditState.accent;
+                hex: AutoEditState.accent-hex;
+                picked(c) => { AutoEditState.accent-picked(c); }
+                hex-entered(value) => { AutoEditState.accent-entered(value); }
+            }
+            Rectangle { horizontal-stretch: 1; }
+        }
+        Text { text: AutoEditState.provider-note; color: Theme.faint; font-size: Theme.text-2xs; wrap: word-wrap; }
+    }
+    DialogFooter {
+        Button { text: "Close"; kind: ButtonKind.ghost; enabled: !AutoEditState.running; clicked => { AutoEditState.close(); } }
+        Button {
+            text: AutoEditState.running ? "Editing…" : AutoEditState.voices.length > 1 ? "Create " + AutoEditState.voices.length + " videos" : "Create video";
+            kind: ButtonKind.primary;
+            enabled: AutoEditState.voices.length > 0 && AutoEditState.backgrounds.length > 0 && !AutoEditState.running;
+            clicked => { AutoEditState.run(); }
+        }
+    }
+}

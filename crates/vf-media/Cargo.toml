@@ -1,0 +1,12 @@
+[package]
+name = "vf-media"
+description = "ViralFlow media I/O through libav (FFmpeg 8): probing, decoding, encoding, filters"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+vf-core.workspace = true
+log.workspace = true
+ffmpeg-next = "9"

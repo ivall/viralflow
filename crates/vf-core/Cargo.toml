@@ -1,0 +1,14 @@
+[package]
+name = "vf-core"
+description = "ViralFlow project model, engine and editing logic (no I/O, no GPU)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+log.workspace = true
+thiserror.workspace = true
+chrono.workspace = true

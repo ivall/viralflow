@@ -1,0 +1,967 @@
+import { Theme, Icons } from "../theme.slint";
+import { Button, ButtonKind, ButtonSize, Surface, Section, SectionHeader, Field, Slider, Segmented, Choice, Select, NumberField, TextArea, TextField, Icon, Switch, ScrollView } from "../widgets.slint";
+import { ColorField, FontPicker } from "../pickers.slint";
+
+export struct ItemInfo {
+    has: bool,
+    count: int,
+    title: string,
+    // 0 video, 1 image, 2 audio, 3 text, 4 shape
+    kind: int,
+    caption: bool,
+    grouped: bool,
+}
+
+export struct TransformData {
+    x: float,
+    y: float,
+    scale: float,
+    rotation: float,
+    opacity: float,
+    blend: string,
+    flip-x: bool,
+    flip-y: bool,
+    animated: bool,
+    inside: bool,
+    keyed: bool,
+    easing: string,
+    b1: float,
+    b2: float,
+    b3: float,
+    b4: float,
+}
+
+export struct FrameData {
+    fit: string,
+    focus-x: float,
+    focus-y: float,
+    radius: float,
+    left: float,
+    right: float,
+    top: float,
+    bottom: float,
+    cropped: bool,
+}
+
+export struct TextData {
+    content: string,
+    font: string,
+    size: float,
+    weight: string,
+    italic: bool,
+    uppercase: bool,
+    color: color,
+    color-hex: string,
+    align: string,
+    letter-spacing: float,
+    line-height: float,
+    max-width: float,
+    stroke-color: color,
+    stroke-hex: string,
+    stroke-width: float,
+    background-color: color,
+    background-hex: string,
+    background-opacity: float,
+    background-padding: float,
+    background-radius: float,
+    shadow-color: color,
+    shadow-hex: string,
+    shadow-opacity: float,
+    shadow-blur: float,
+    shadow-distance: float,
+    highlight-mode: string,
+    highlight-color: color,
+    highlight-hex: string,
+    word-color: color,
+    word-hex: string,
+    highlight-index: int,
+    words: int,
+}
+
+export struct ShapeData {
+    kind: string,
+    color: color,
+    hex: string,
+    width: float,
+    height: float,
+    radius: float,
+    blur: float,
+    square: bool,
+}
+
+export struct AdjustData {
+    exposure: float,
+    brightness: float,
+    contrast: float,
+    saturation: float,
+    temperature: float,
+    tint: float,
+    hue: float,
+    vignette: float,
+    changed: bool,
+}
+
+export struct AudioData {
+    volume: float,
+    fade-in: float,
+    fade-out: float,
+    max-fade: float,
+    enhance: float,
+    muted: bool,
+    silent: bool,
+}
+
+export struct SpeedData {
+    speed: float,
+    duration: string,
+}
+
+export struct AnimationData {
+    in-kind: string,
+    in-duration: float,
+    out-kind: string,
+    out-duration: float,
+    max: float,
+    effect: string,
+    has-seam: bool,
+    seam-kind: string,
+    seam-duration: float,
+    seam-max: float,
+}
+
+export struct Stat {
+    label: string,
+    value: string,
+}
+
+export struct ProjectData {
+    name: string,
+    aspect: string,
+    fps: string,
+    background: color,
+    background-hex: string,
+}
+
+export global InspectorState {
+    in property <ItemInfo> item;
+    in-out property <string> tab: "main";
+    in property <TransformData> transform;
+    in property <FrameData> frame;
+    in property <TextData> text;
+    in property <ShapeData> shape;
+    in property <AdjustData> adjust;
+    in property <AudioData> audio;
+    in property <SpeedData> speed;
+    in property <AnimationData> animation;
+    in property <ProjectData> project;
+    in property <[Stat]> stats;
+    in property <[string]> fonts;
+    in property <[Choice]> animations-in;
+    in property <[Choice]> animations-out;
+    in property <[Choice]> effects;
+    in property <[Choice]> transitions;
+    in property <[Choice]> text-presets;
+    in property <[Choice]> aspects;
+    in property <bool> can-rewrite;
+    in property <bool> rewriting;
+    in property <int> focus-text-request;
+
+    /// Start of a continuous change (slider drag, typing): one undo step.
+    callback begin();
+    /// Live value (no undo step of its own).
+    callback number(string, float);
+    /// Set with its own undo step.
+    callback commit(string, float);
+    callback text-changed(string, string);
+    callback choose(string, string);
+    callback toggle(string);
+    callback color(string, color);
+    callback hex(string, string);
+    callback action(string);
+    /// Moves control point 0 or 1 of the custom easing curve.
+    callback bezier(int, float, float);
+    /// Case-insensitive substring match for search fields.
+    pure callback matches(string, string) -> bool;
+}
+
+component Tabs inherits Rectangle {
+    in property <[Choice]> options;
+    height: 32px;
+    border-radius: Theme.radius;
+    border-width: 1px;
+    border-color: Theme.line;
+    background: Theme.app;
+    HorizontalLayout {
+        padding: 2px;
+        for option in root.options: Rectangle {
+            horizontal-stretch: 1;
+            border-radius: 6px;
+            background: option.value == InspectorState.tab ? Theme.raised : transparent;
+            border-width: option.value == InspectorState.tab ? 1px : 0px;
+            border-color: #ffffff0d;
+            Text {
+                text: option.label;
+                color: option.value == InspectorState.tab || tab-touch.has-hover ? Theme.fg : Theme.muted;
+                font-size: Theme.text-2xs;
+                font-weight: 500;
+                vertical-alignment: center;
+                horizontal-alignment: center;
+                overflow: elide;
+            }
+            tab-touch := TouchArea { clicked => { InspectorState.tab = option.value; } }
+        }
+    }
+}
+
+component Check inherits Rectangle {
+    in property <image> icon;
+    in property <bool> on;
+    in property <string> tip;
+    callback toggled;
+    width: 32px;
+    height: 32px;
+    border-radius: Theme.radius;
+    border-width: 1px;
+    border-color: root.on ? Theme.accent : Theme.line;
+    Icon { source: root.icon; size: 14px; colorize: root.on || check-touch.has-hover ? Theme.fg : Theme.muted; }
+    check-touch := TouchArea { clicked => { root.toggled(); } }
+}
+
+/// A section that can be folded (Word highlight, Stroke, ...).
+component Fold inherits Rectangle {
+    in property <string> title;
+    in-out property <bool> open: true;
+    VerticalLayout {
+        padding: 16px;
+        spacing: 12px;
+        Rectangle {
+            height: 20px;
+            HorizontalLayout {
+                spacing: 4px;
+                alignment: start;
+                VerticalLayout {
+                    alignment: center;
+                    Icon { source: Icons.chevron-right; size: 14px; colorize: Theme.muted; transform-rotation: root.open ? 90deg : 0deg; }
+                }
+                Text { text: root.title; color: Theme.fg; font-size: Theme.text-sm; font-weight: 600; vertical-alignment: center; }
+            }
+            TouchArea { clicked => { root.open = !root.open; } }
+        }
+        Rectangle {
+            height: root.open ? fold-content.preferred-height : 0px;
+            clip: true;
+            fold-content := VerticalLayout {
+                y: 0;
+                height: self.preferred-height;
+                spacing: 12px;
+                @children
+            }
+        }
+    }
+    Rectangle { y: root.height - 1px; height: 1px; background: Theme.line; }
+}
+
+component Percent inherits Slider {
+    in property <string> field;
+    in property <float> scale: 100;
+    in property <string> unit: "%";
+    in property <int> digits: 0;
+    display: self.digits == 0 ? round(self.value) + root.unit : (round(self.value * pow(10, self.digits)) / pow(10, self.digits)) + root.unit;
+    started => { InspectorState.begin(); }
+    changed(v) => { InspectorState.number(root.field, v / root.scale); }
+}
+
+component BezierEditor inherits VerticalLayout {
+    property <float> y-min: -0.6;
+    property <float> y-max: 1.6;
+    property <int> dragging: -1;
+    spacing: 4px;
+    area := Rectangle {
+        height: 150px;
+        border-radius: 6px;
+        background: Theme.app;
+        property <length> pad: 12px;
+        function px(x: float) -> length { return self.pad + x * (self.width - 2 * self.pad); }
+        function py(y: float) -> length { return self.pad + (root.y-max - y) / (root.y-max - root.y-min) * (self.height - 2 * self.pad); }
+        Rectangle { x: parent.px(0); width: parent.px(1) - parent.px(0); y: parent.py(0); height: 1px; background: Theme.line; }
+        Rectangle { x: parent.px(0); width: parent.px(1) - parent.px(0); y: parent.py(1); height: 1px; background: Theme.line; }
+        Path {
+            width: parent.width;
+            height: parent.height;
+            viewbox-width: self.width / 1px;
+            viewbox-height: self.height / 1px;
+            stroke: Theme.faint;
+            stroke-width: 1px;
+            MoveTo { x: area.px(0) / 1px; y: area.py(0) / 1px; }
+            LineTo { x: area.px(InspectorState.transform.b1) / 1px; y: area.py(InspectorState.transform.b2) / 1px; }
+            MoveTo { x: area.px(1) / 1px; y: area.py(1) / 1px; }
+            LineTo { x: area.px(InspectorState.transform.b3) / 1px; y: area.py(InspectorState.transform.b4) / 1px; }
+        }
+        Path {
+            width: parent.width;
+            height: parent.height;
+            viewbox-width: self.width / 1px;
+            viewbox-height: self.height / 1px;
+            stroke: Theme.accent;
+            stroke-width: 2px;
+            MoveTo { x: area.px(0) / 1px; y: area.py(0) / 1px; }
+            CubicTo {
+                control-1-x: area.px(InspectorState.transform.b1) / 1px;
+                control-1-y: area.py(InspectorState.transform.b2) / 1px;
+                control-2-x: area.px(InspectorState.transform.b3) / 1px;
+                control-2-y: area.py(InspectorState.transform.b4) / 1px;
+                x: area.px(1) / 1px;
+                y: area.py(1) / 1px;
+            }
+        }
+        for point[index] in [
+            { x: InspectorState.transform.b1, y: InspectorState.transform.b2 },
+            { x: InspectorState.transform.b3, y: InspectorState.transform.b4 },
+        ]: Rectangle {
+            x: area.px(point.x) - 6px;
+            y: area.py(point.y) - 6px;
+            width: 12px;
+            height: 12px;
+            border-radius: 6px;
+            border-width: 2px;
+            border-color: Theme.app;
+            background: Theme.accent;
+        }
+        TouchArea {
+            mouse-cursor: grab;
+            function value-x(x: length) -> float { return max(0, min(1, (x - area.pad) / (area.width - 2 * area.pad))); }
+            function value-y(y: length) -> float { return max(root.y-min, min(root.y-max, root.y-max - (y - area.pad) / (area.height - 2 * area.pad) * (root.y-max - root.y-min))); }
+            pointer-event(event) => {
+                if event.kind == PointerEventKind.down {
+                    let d1 = abs(self.mouse-x - area.px(InspectorState.transform.b1)) + abs(self.mouse-y - area.py(InspectorState.transform.b2));
+                    let d2 = abs(self.mouse-x - area.px(InspectorState.transform.b3)) + abs(self.mouse-y - area.py(InspectorState.transform.b4));
+                    root.dragging = d1 <= d2 ? 0 : 1;
+                    InspectorState.begin();
+                }
+                if event.kind == PointerEventKind.up { root.dragging = -1; }
+            }
+            moved => {
+                if self.pressed && root.dragging >= 0 {
+                    InspectorState.bezier(root.dragging, round(self.value-x(self.mouse-x) * 100) / 100, round(self.value-y(self.mouse-y) * 100) / 100);
+                }
+            }
+        }
+    }
+    Text {
+        text: "cubic-bezier(" + round(InspectorState.transform.b1 * 100) / 100 + ", " + round(InspectorState.transform.b2 * 100) / 100 + ", " + round(InspectorState.transform.b3 * 100) / 100 + ", " + round(InspectorState.transform.b4 * 100) / 100 + ")";
+        color: Theme.faint;
+        font-size: Theme.text-2xs;
+        horizontal-alignment: center;
+    }
+}
+
+component TransformSection inherits VerticalLayout {
+    Section {
+        SectionHeader {
+            title: "Transform";
+            Button { icon: Icons.rotate-ccw; kind: ButtonKind.ghost; size: ButtonSize.sm; tooltip: "Reset transform"; clicked => { InspectorState.action("reset-transform"); } }
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            NumberField { label: "X"; suffix: "%"; step: 0.1; precision: 1; scrub: 0.1; value: InspectorState.transform.x; started => { InspectorState.begin(); } changed(v) => { InspectorState.number("transform.x", v); } }
+            NumberField { label: "Y"; suffix: "%"; step: 0.1; precision: 1; scrub: 0.1; value: InspectorState.transform.y; started => { InspectorState.begin(); } changed(v) => { InspectorState.number("transform.y", v); } }
+        }
+        Percent { label: "Scale"; field: "transform.scale"; minimum: 5; maximum: 400; step: 1; center: 100; value: InspectorState.transform.scale * 100; }
+        HorizontalLayout {
+            spacing: 8px;
+            Text { width: Theme.label-width; text: "Rotation"; color: Theme.muted; font-size: Theme.text-xs; vertical-alignment: center; }
+            NumberField { horizontal-stretch: 1; label: "↻"; suffix: "°"; step: 1; precision: 1; scrub: 0.5; value: InspectorState.transform.rotation; started => { InspectorState.begin(); } changed(v) => { InspectorState.number("transform.rotation", v); } }
+            Button { icon: Icons.rotate-cw; kind: ButtonKind.ghost; size: ButtonSize.sm; tooltip: "Rotate 90°"; clicked => { InspectorState.action("rotate-90"); } }
+            Button { icon: Icons.flip-horizontal; kind: ButtonKind.ghost; size: ButtonSize.sm; active: InspectorState.transform.flip-x; tooltip: "Flip horizontally"; clicked => { InspectorState.toggle("flip-x"); } }
+            Button { icon: Icons.flip-vertical; kind: ButtonKind.ghost; size: ButtonSize.sm; active: InspectorState.transform.flip-y; tooltip: "Flip vertically"; clicked => { InspectorState.toggle("flip-y"); } }
+        }
+        Percent { label: "Opacity"; field: "transform.opacity"; minimum: 0; maximum: 100; step: 1; value: InspectorState.transform.opacity * 100; }
+        if InspectorState.item.kind != 3: Field {
+            label: "Blend";
+            Select {
+                horizontal-stretch: 1;
+                current: InspectorState.transform.blend;
+                options: [
+                    { value: "normal", label: "Normal" }, { value: "multiply", label: "Multiply" }, { value: "screen", label: "Screen" },
+                    { value: "overlay", label: "Overlay" }, { value: "darken", label: "Darken" }, { value: "lighten", label: "Lighten" },
+                    { value: "color-dodge", label: "Color dodge" }, { value: "color-burn", label: "Color burn" }, { value: "hard-light", label: "Hard light" },
+                    { value: "soft-light", label: "Soft light" }, { value: "difference", label: "Difference" }, { value: "exclusion", label: "Exclusion" },
+                ];
+                selected(value) => { InspectorState.choose("blend", value); }
+            }
+        }
+    }
+    Section {
+        SectionHeader {
+            title: "Keyframes";
+            if InspectorState.transform.animated: Button { text: "Clear all"; kind: ButtonKind.ghost; size: ButtonSize.sm; clicked => { InspectorState.action("clear-keyframes"); } }
+        }
+        HorizontalLayout {
+            spacing: 6px;
+            Button { icon: Icons.chevron-left; kind: ButtonKind.ghost; size: ButtonSize.sm; enabled: InspectorState.transform.animated; tooltip: "Previous keyframe (Shift+K)"; clicked => { InspectorState.action("previous-keyframe"); } }
+            Button {
+                stretch: true;
+                size: ButtonSize.sm;
+                text: InspectorState.transform.keyed ? "Remove keyframe" : "Add keyframe";
+                icon: Icons.diamond;
+                kind: InspectorState.transform.keyed ? ButtonKind.primary : ButtonKind.outline;
+                enabled: InspectorState.transform.inside;
+                clicked => { InspectorState.action("toggle-keyframe"); }
+            }
+            Button { icon: Icons.chevron-right; kind: ButtonKind.ghost; size: ButtonSize.sm; enabled: InspectorState.transform.animated; tooltip: "Next keyframe (Alt+K)"; clicked => { InspectorState.action("next-keyframe"); } }
+        }
+        if InspectorState.transform.keyed: Field {
+            label: "Easing";
+            Select {
+                horizontal-stretch: 1;
+                current: InspectorState.transform.easing;
+                options: [
+                    { value: "linear", label: "Linear" }, { value: "ease-in", label: "Ease in" }, { value: "ease-out", label: "Ease out" },
+                    { value: "ease-in-out", label: "Ease in-out" }, { value: "back-in", label: "Back in" }, { value: "back-out", label: "Overshoot" },
+                    { value: "back-in-out", label: "Back in-out" }, { value: "custom", label: "Custom curve" },
+                ];
+                selected(value) => { InspectorState.choose("easing", value); }
+            }
+        }
+        if InspectorState.transform.keyed && InspectorState.transform.easing == "custom": BezierEditor { }
+        Text {
+            text: InspectorState.transform.animated ? "Changes at the playhead are saved into a keyframe." : "Add a keyframe, move the playhead and change the transform to animate.";
+            color: Theme.faint;
+            font-size: Theme.text-2xs;
+            wrap: word-wrap;
+        }
+    }
+}
+
+component FrameSection inherits VerticalLayout {
+    Section {
+        SectionHeader { title: "Frame"; }
+        Field {
+            label: "Fit";
+            Segmented {
+                horizontal-stretch: 1;
+                current: InspectorState.frame.fit;
+                options: [{ value: "contain", label: "Fit" }, { value: "cover", label: "Fill" }, { value: "fill", label: "Stretch" }];
+                selected(value) => { InspectorState.choose("fit", value); }
+            }
+        }
+        if InspectorState.frame.fit == "cover": Percent { label: "Focus X"; field: "frame.focus-x"; scale: 1; minimum: 0; maximum: 100; step: 1; center: 50; value: InspectorState.frame.focus-x; }
+        if InspectorState.frame.fit == "cover": Percent { label: "Focus Y"; field: "frame.focus-y"; scale: 1; minimum: 0; maximum: 100; step: 1; center: 50; value: InspectorState.frame.focus-y; }
+        Percent { label: "Corners"; field: "radius"; scale: 1; unit: ""; minimum: 0; maximum: 400; step: 1; value: InspectorState.frame.radius; }
+    }
+    Fold {
+        title: "Crop";
+        open: InspectorState.frame.cropped;
+        if InspectorState.frame.cropped: HorizontalLayout {
+            alignment: end;
+            Button { text: "Reset"; kind: ButtonKind.ghost; size: ButtonSize.sm; clicked => { InspectorState.action("reset-crop"); } }
+        }
+        Percent { label: "Left"; field: "crop.left"; scale: 1; minimum: 0; maximum: 90; step: 0.5; value: InspectorState.frame.left; }
+        Percent { label: "Right"; field: "crop.right"; scale: 1; minimum: 0; maximum: 90; step: 0.5; value: InspectorState.frame.right; }
+        Percent { label: "Top"; field: "crop.top"; scale: 1; minimum: 0; maximum: 90; step: 0.5; value: InspectorState.frame.top; }
+        Percent { label: "Bottom"; field: "crop.bottom"; scale: 1; minimum: 0; maximum: 90; step: 0.5; value: InspectorState.frame.bottom; }
+    }
+}
+
+component TextSection inherits VerticalLayout {
+    // The text area edits its own copy; it follows the model when another clip
+    // is selected or the text changes elsewhere (undo).
+    property <string> source: InspectorState.text.content;
+    changed source => { content.text = self.source; }
+    init => { content.text = self.source; }
+    Section {
+        SectionHeader {
+            title: "Text";
+            if InspectorState.can-rewrite: Button {
+                text: InspectorState.rewriting ? "Rewriting…" : "Rewrite";
+                icon: Icons.sparkles;
+                kind: ButtonKind.ghost;
+                size: ButtonSize.sm;
+                enabled: !InspectorState.rewriting && InspectorState.text.content != "";
+                clicked => { InspectorState.action("rewrite"); }
+            }
+        }
+        content := TextArea {
+            edited(value) => { InspectorState.text-changed("content", value); }
+        }
+        if InspectorState.item.caption: Button { text: "Apply this style to all captions"; kind: ButtonKind.outline; size: ButtonSize.sm; stretch: true; clicked => { InspectorState.action("style-to-group"); } }
+    }
+    Fold {
+        title: "Style presets";
+        open: false;
+        presets := Rectangle {
+            property <int> columns: 2;
+            property <length> cell: (self.width - 6px) / 2;
+            height: ceil(InspectorState.text-presets.length / 2) * 54px;
+            for preset[index] in InspectorState.text-presets: Rectangle {
+                x: mod(index, 2) * (presets.cell + 6px);
+                y: floor(index / 2) * 54px;
+                width: presets.cell;
+                height: 48px;
+                border-radius: Theme.radius;
+                border-width: 1px;
+                border-color: preset-touch.has-hover ? Theme.line-strong : Theme.line;
+                background: #24262e;
+                clip: true;
+                if preset.icon.width > 0: Image {
+                    source: preset.icon;
+                    width: parent.width - 12px;
+                    height: parent.height - 10px;
+                    image-fit: contain;
+                    accessible-role: image;
+                    accessible-label: preset.label;
+                }
+                if preset.icon.width == 0: Text { text: preset.label; color: Theme.fg; font-size: Theme.text-xs; horizontal-alignment: center; vertical-alignment: center; }
+                preset-touch := TouchArea { clicked => { InspectorState.choose("preset", preset.value); } }
+            }
+        }
+    }
+    Section {
+        SectionHeader { title: "Font"; }
+        FontPicker {
+            current: InspectorState.text.font;
+            families: InspectorState.fonts;
+            chosen(family) => { InspectorState.choose("font", family); }
+            matches(family, query) => { return InspectorState.matches(family, query); }
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            Select {
+                horizontal-stretch: 1;
+                current: InspectorState.text.weight;
+                options: [
+                    { value: "300", label: "Light" }, { value: "400", label: "Regular" }, { value: "500", label: "Medium" },
+                    { value: "600", label: "Semibold" }, { value: "700", label: "Bold" }, { value: "800", label: "Extra bold" }, { value: "900", label: "Black" },
+                ];
+                selected(value) => { InspectorState.choose("weight", value); }
+            }
+            NumberField { width: 88px; label: "Size"; minimum: 8; maximum: 600; step: 1; scrub: 0.5; value: InspectorState.text.size; started => { InspectorState.begin(); } changed(v) => { InspectorState.number("text.size", v); } }
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            ColorField {
+                horizontal-stretch: 1;
+                value: InspectorState.text.color;
+                hex: InspectorState.text.color-hex;
+                started => { InspectorState.begin(); }
+                picked(c) => { InspectorState.color("text.color", c); }
+                hex-entered(value) => { InspectorState.hex("text.color", value); }
+            }
+            Segmented {
+                width: 100px;
+                current: InspectorState.text.align;
+                options: [{ value: "left", icon: Icons.align-left }, { value: "center", icon: Icons.align-center }, { value: "right", icon: Icons.align-right }];
+                selected(value) => { InspectorState.choose("align", value); }
+            }
+            Check { icon: Icons.italic; on: InspectorState.text.italic; toggled => { InspectorState.toggle("italic"); } }
+            Check { icon: Icons.case-upper; on: InspectorState.text.uppercase; toggled => { InspectorState.toggle("uppercase"); } }
+        }
+        Percent { label: "Spacing"; field: "text.letter-spacing"; scale: 1; unit: ""; minimum: -20; maximum: 60; step: 1; center: 0; value: InspectorState.text.letter-spacing; }
+        Percent { label: "Line height"; field: "text.line-height"; scale: 1; unit: ""; digits: 2; minimum: 0.7; maximum: 2.5; step: 0.01; value: InspectorState.text.line-height; }
+        Percent { label: "Box width"; field: "text.max-width"; scale: 1; minimum: 10; maximum: 100; step: 1; value: InspectorState.text.max-width; }
+    }
+    Fold {
+        title: "Word highlight";
+        open: InspectorState.text.highlight-mode != "none";
+        Segmented {
+            current: InspectorState.text.highlight-mode;
+            options: [{ value: "none", label: "None" }, { value: "color", label: "Color" }, { value: "box", label: "Box" }];
+            selected(value) => { InspectorState.choose("highlight-mode", value); }
+        }
+        if InspectorState.text.highlight-mode != "none": Field {
+            label: "Color";
+            ColorField {
+                horizontal-stretch: 1;
+                value: InspectorState.text.highlight-color;
+                hex: InspectorState.text.highlight-hex;
+                started => { InspectorState.begin(); }
+                picked(c) => { InspectorState.color("text.highlight-color", c); }
+                hex-entered(value) => { InspectorState.hex("text.highlight-color", value); }
+            }
+        }
+        if InspectorState.text.highlight-mode == "box": Field {
+            label: "Word color";
+            ColorField {
+                horizontal-stretch: 1;
+                value: InspectorState.text.word-color;
+                hex: InspectorState.text.word-hex;
+                started => { InspectorState.begin(); }
+                picked(c) => { InspectorState.color("text.word-color", c); }
+                hex-entered(value) => { InspectorState.hex("text.word-color", value); }
+            }
+        }
+        if InspectorState.text.highlight-mode != "none" && !InspectorState.item.caption: Field {
+            label: "Word";
+            NumberField { horizontal-stretch: 1; minimum: 1; maximum: max(1, InspectorState.text.words); step: 1; value: InspectorState.text.highlight-index + 1; started => { InspectorState.begin(); } changed(v) => { InspectorState.number("text.highlight-index", v - 1); } }
+        }
+        if InspectorState.text.highlight-mode != "none" && InspectorState.item.caption: Text { text: "Captions light up each word as it is spoken."; color: Theme.faint; font-size: Theme.text-2xs; wrap: word-wrap; }
+    }
+    Fold {
+        title: "Stroke";
+        open: InspectorState.text.stroke-width > 0;
+        Field {
+            label: "Color";
+            ColorField {
+                horizontal-stretch: 1;
+                value: InspectorState.text.stroke-color;
+                hex: InspectorState.text.stroke-hex;
+                started => { InspectorState.begin(); }
+                picked(c) => { InspectorState.color("text.stroke-color", c); }
+                hex-entered(value) => { InspectorState.hex("text.stroke-color", value); }
+            }
+        }
+        Percent { label: "Width"; field: "text.stroke-width"; scale: 1; unit: ""; digits: 1; minimum: 0; maximum: 30; step: 0.5; value: InspectorState.text.stroke-width; }
+    }
+    Fold {
+        title: "Background";
+        open: InspectorState.text.background-opacity > 0;
+        Field {
+            label: "Color";
+            ColorField {
+                horizontal-stretch: 1;
+                value: InspectorState.text.background-color;
+                hex: InspectorState.text.background-hex;
+                started => { InspectorState.begin(); }
+                picked(c) => { InspectorState.color("text.background-color", c); }
+                hex-entered(value) => { InspectorState.hex("text.background-color", value); }
+            }
+        }
+        Percent { label: "Opacity"; field: "text.background-opacity"; minimum: 0; maximum: 100; step: 1; value: InspectorState.text.background-opacity * 100; }
+        Percent { label: "Padding"; field: "text.background-padding"; scale: 1; unit: ""; minimum: 0; maximum: 80; step: 1; value: InspectorState.text.background-padding; }
+        Percent { label: "Corners"; field: "text.background-radius"; scale: 1; unit: ""; minimum: 0; maximum: 80; step: 1; value: InspectorState.text.background-radius; }
+    }
+    Fold {
+        title: "Shadow";
+        open: InspectorState.text.shadow-opacity > 0;
+        Field {
+            label: "Color";
+            ColorField {
+                horizontal-stretch: 1;
+                value: InspectorState.text.shadow-color;
+                hex: InspectorState.text.shadow-hex;
+                started => { InspectorState.begin(); }
+                picked(c) => { InspectorState.color("text.shadow-color", c); }
+                hex-entered(value) => { InspectorState.hex("text.shadow-color", value); }
+            }
+        }
+        Percent { label: "Opacity"; field: "text.shadow-opacity"; minimum: 0; maximum: 100; step: 1; value: InspectorState.text.shadow-opacity * 100; }
+        Percent { label: "Blur"; field: "text.shadow-blur"; scale: 1; unit: ""; minimum: 0; maximum: 80; step: 1; value: InspectorState.text.shadow-blur; }
+        Percent { label: "Distance"; field: "text.shadow-distance"; scale: 1; unit: ""; minimum: 0; maximum: 60; step: 1; value: InspectorState.text.shadow-distance; }
+    }
+}
+
+component ShapeSection inherits Section {
+    SectionHeader { title: "Shape"; }
+    if InspectorState.shape.kind != "blur": Field {
+        label: "Color";
+        ColorField {
+            horizontal-stretch: 1;
+            value: InspectorState.shape.color;
+            hex: InspectorState.shape.hex;
+            started => { InspectorState.begin(); }
+            picked(c) => { InspectorState.color("shape.color", c); }
+            hex-entered(value) => { InspectorState.hex("shape.color", value); }
+        }
+    }
+    Percent { label: "Width"; field: "shape.width"; scale: 1; minimum: 1; maximum: 200; step: 0.5; value: InspectorState.shape.width; }
+    if !InspectorState.shape.square: Percent { label: "Height"; field: "shape.height"; scale: 1; digits: 1; minimum: 0.2; maximum: 200; step: 0.2; value: InspectorState.shape.height; }
+    if InspectorState.shape.kind == "rect" || InspectorState.shape.kind == "blur": Percent { label: "Corners"; field: "radius"; scale: 1; unit: ""; minimum: 0; maximum: 300; step: 1; value: InspectorState.shape.radius; }
+    if InspectorState.shape.kind == "blur": Percent { label: "Blur"; field: "shape.blur"; scale: 1; unit: ""; minimum: 2; maximum: 120; step: 1; value: InspectorState.shape.blur; }
+}
+
+component AdjustSection inherits Section {
+    SectionHeader {
+        title: "Adjust";
+        if InspectorState.adjust.changed: Button { icon: Icons.rotate-ccw; kind: ButtonKind.ghost; size: ButtonSize.sm; tooltip: "Reset adjustments"; clicked => { InspectorState.action("reset-adjust"); } }
+    }
+    Percent { label: "Exposure"; field: "adjust.exposure"; unit: ""; minimum: -100; maximum: 100; step: 1; center: 0; value: InspectorState.adjust.exposure * 100; }
+    Percent { label: "Brightness"; field: "adjust.brightness"; unit: ""; minimum: -100; maximum: 100; step: 1; center: 0; value: InspectorState.adjust.brightness * 100; }
+    Percent { label: "Contrast"; field: "adjust.contrast"; unit: ""; minimum: -100; maximum: 100; step: 1; center: 0; value: InspectorState.adjust.contrast * 100; }
+    Percent { label: "Saturation"; field: "adjust.saturation"; unit: ""; minimum: -100; maximum: 100; step: 1; center: 0; value: InspectorState.adjust.saturation * 100; }
+    Percent { label: "Temperature"; field: "adjust.temperature"; unit: ""; minimum: -100; maximum: 100; step: 1; center: 0; value: InspectorState.adjust.temperature * 100; }
+    Percent { label: "Tint"; field: "adjust.tint"; unit: ""; minimum: -100; maximum: 100; step: 1; center: 0; value: InspectorState.adjust.tint * 100; }
+    Percent { label: "Hue"; field: "adjust.hue"; unit: ""; minimum: -100; maximum: 100; step: 1; center: 0; value: InspectorState.adjust.hue * 100; }
+    Percent { label: "Vignette"; field: "adjust.vignette"; unit: ""; minimum: 0; maximum: 100; step: 1; value: InspectorState.adjust.vignette * 100; }
+}
+
+component AudioSection inherits Section {
+    SectionHeader { title: "Audio"; }
+    if InspectorState.audio.silent: Text { text: "This video has no sound."; color: Theme.muted; font-size: Theme.text-xs; }
+    if !InspectorState.audio.silent: Percent { label: "Volume"; field: "audio.volume"; minimum: 0; maximum: 200; step: 1; center: 100; value: InspectorState.audio.volume * 100; }
+    if !InspectorState.audio.silent: HorizontalLayout {
+        padding-left: Theme.label-width + 12px;
+        Text {
+        text: InspectorState.audio.volume <= 0.0001 ? "−∞ dB" : (round(20 * log(InspectorState.audio.volume, 10) * 10) / 10) + " dB";
+        color: Theme.faint;
+        font-size: 11px;
+        }
+    }
+    if !InspectorState.audio.silent: Percent { label: "Fade in"; field: "audio.fade-in"; scale: 1; unit: "s"; digits: 1; minimum: 0; maximum: InspectorState.audio.max-fade; step: 0.1; value: InspectorState.audio.fade-in; }
+    if !InspectorState.audio.silent: Percent { label: "Fade out"; field: "audio.fade-out"; scale: 1; unit: "s"; digits: 1; minimum: 0; maximum: InspectorState.audio.max-fade; step: 0.1; value: InspectorState.audio.fade-out; }
+    if !InspectorState.audio.silent: Slider {
+        label: "Clean voice";
+        minimum: 0;
+        maximum: 100;
+        step: 5;
+        value: InspectorState.audio.enhance * 100;
+        display: InspectorState.audio.enhance > 0 ? round(InspectorState.audio.enhance * 100) + "%" : "Off";
+        started => { InspectorState.begin(); }
+        changed(v) => { InspectorState.number("audio.enhance", v / 100); }
+    }
+    if !InspectorState.audio.silent && InspectorState.audio.enhance > 0: Text {
+        text: "Removes rumble, hiss and harsh “s” sounds and evens out the level.";
+        color: Theme.faint;
+        font-size: 11px;
+        wrap: word-wrap;
+    }
+    if !InspectorState.audio.silent: HorizontalLayout {
+        spacing: 8px;
+        padding-top: 4px;
+        Button { stretch: true; size: ButtonSize.sm; kind: InspectorState.audio.muted ? ButtonKind.primary : ButtonKind.outline; icon: Icons.volume-x; text: InspectorState.audio.muted ? "Muted" : "Mute"; clicked => { InspectorState.toggle("muted"); } }
+        Button { stretch: true; size: ButtonSize.sm; kind: ButtonKind.outline; icon: Icons.captions; text: "Auto captions"; clicked => { InspectorState.action("captions"); } }
+    }
+}
+
+component SpeedSection inherits Section {
+    SectionHeader { title: "Speed"; }
+    HorizontalLayout {
+        spacing: 4px;
+        for preset in [0.25, 0.5, 1, 1.5, 2, 3, 5]: Rectangle {
+            horizontal-stretch: 1;
+            height: 28px;
+            border-radius: 6px;
+            border-width: 1px;
+            border-color: abs(InspectorState.speed.speed - preset) < 0.000001 ? Theme.accent : Theme.line;
+            background: abs(InspectorState.speed.speed - preset) < 0.000001 ? Theme.accent.with-alpha(0.1) : transparent;
+            Text { text: preset + "×"; color: Theme.fg; font-size: Theme.text-2xs; horizontal-alignment: center; vertical-alignment: center; }
+            TouchArea { clicked => { InspectorState.commit("speed", preset); } }
+        }
+    }
+    Slider {
+        label: "Speed";
+        minimum: -100;
+        maximum: 100;
+        step: 1;
+        center: 0;
+        value: log(InspectorState.speed.speed, 10) * 100;
+        display: round(InspectorState.speed.speed * 100) / 100 + "×";
+        started => { InspectorState.begin(); }
+        changed(v) => { InspectorState.number("speed", pow(10, v / 100)); }
+    }
+    Field {
+        label: "Exact";
+        NumberField { horizontal-stretch: 1; suffix: "×"; minimum: 0.1; maximum: 10; step: 0.05; precision: 2; value: InspectorState.speed.speed; started => { InspectorState.begin(); } changed(v) => { InspectorState.number("speed", v); } }
+    }
+    Text {
+        text: "Clip length: " + InspectorState.speed.duration + ". Changing speed also changes the length; clips after it move only when they would overlap.";
+        color: Theme.faint;
+        font-size: Theme.text-2xs;
+        wrap: word-wrap;
+    }
+}
+
+component Presets inherits Rectangle {
+    in property <[Choice]> options;
+    in property <string> current;
+    callback chosen(string);
+    property <length> cell: (self.width - 12px) / 3;
+    height: ceil(self.options.length / 3) * 38px - 6px;
+    for preset[index] in root.options: Rectangle {
+        x: mod(index, 3) * (root.cell + 6px);
+        y: floor(index / 3) * 38px;
+        width: root.cell;
+        height: 32px;
+        border-radius: 6px;
+        border-width: 1px;
+        border-color: preset.value == root.current ? Theme.accent : touch.has-hover ? Theme.line-strong : Theme.line;
+        background: preset.value == root.current ? Theme.accent.with-alpha(0.1) : transparent;
+        Text { text: preset.label; color: preset.value == root.current || touch.has-hover ? Theme.fg : Theme.muted; font-size: Theme.text-2xs; horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
+        touch := TouchArea { clicked => { root.chosen(preset.value); } }
+    }
+}
+
+component AnimationSection inherits VerticalLayout {
+    Section {
+        SectionHeader {
+            title: "In";
+            if InspectorState.animation.in-kind != "none": Button { text: "Preview"; icon: Icons.play; kind: ButtonKind.ghost; size: ButtonSize.sm; clicked => { InspectorState.action("preview-in"); } }
+        }
+        Presets { options: InspectorState.animations-in; current: InspectorState.animation.in-kind; chosen(kind) => { InspectorState.choose("anim-in", kind); } }
+        if InspectorState.animation.in-kind != "none": Percent { label: "Duration"; field: "anim-in.duration"; scale: 1; unit: "s"; digits: 2; minimum: 0.1; maximum: max(0.2, min(5, InspectorState.animation.max)); step: 0.05; value: InspectorState.animation.in-duration; }
+    }
+    Section {
+        SectionHeader {
+            title: "Out";
+            if InspectorState.animation.out-kind != "none": Button { text: "Preview"; icon: Icons.play; kind: ButtonKind.ghost; size: ButtonSize.sm; clicked => { InspectorState.action("preview-out"); } }
+        }
+        Presets { options: InspectorState.animations-out; current: InspectorState.animation.out-kind; chosen(kind) => { InspectorState.choose("anim-out", kind); } }
+        if InspectorState.animation.out-kind != "none": Percent { label: "Duration"; field: "anim-out.duration"; scale: 1; unit: "s"; digits: 2; minimum: 0.1; maximum: max(0.2, min(5, InspectorState.animation.max)); step: 0.05; value: InspectorState.animation.out-duration; }
+    }
+    if InspectorState.item.kind != 4: Section {
+        SectionHeader { title: "Effect"; }
+        Field {
+            label: "Effect";
+            Select { horizontal-stretch: 1; current: InspectorState.animation.effect; options: InspectorState.effects; selected(kind) => { InspectorState.choose("effect", kind); } }
+        }
+    }
+    if InspectorState.animation.has-seam: Section {
+        last: true;
+        SectionHeader { title: "Transition in"; }
+        Field {
+            label: "Type";
+            Select { horizontal-stretch: 1; current: InspectorState.animation.seam-kind; options: InspectorState.transitions; selected(kind) => { InspectorState.choose("transition", kind); } }
+        }
+        if InspectorState.animation.seam-kind != "none": Percent { label: "Duration"; field: "transition.duration"; scale: 1; unit: "s"; digits: 2; minimum: 0.1; maximum: InspectorState.animation.seam-max; step: 0.05; value: InspectorState.animation.seam-duration; }
+        if InspectorState.animation.seam-kind != "none": Button { text: "Remove transition"; icon: Icons.trash; kind: ButtonKind.ghost; size: ButtonSize.sm; stretch: true; clicked => { InspectorState.choose("transition", "none"); } }
+    }
+}
+
+component ProjectSection inherits VerticalLayout {
+    property <string> source: InspectorState.project.name;
+    changed source => { name-field.text = self.source; }
+    init => { name-field.text = self.source; }
+    Section {
+        SectionHeader { title: "Project"; }
+        Field {
+            label: "Name";
+            name-field := TextField {
+                horizontal-stretch: 1;
+                accepted(value) => { InspectorState.text-changed("project.name", value); }
+                focus-lost(value) => { InspectorState.text-changed("project.name", value); }
+            }
+        }
+        Field {
+            label: "Canvas";
+            Select {
+                horizontal-stretch: 1;
+                current: InspectorState.project.aspect;
+                list-width: 300px;
+                options: InspectorState.aspects;
+                selected(value) => { InspectorState.choose("aspect", value); }
+            }
+        }
+        Field {
+            label: "Frame rate";
+            Select {
+                horizontal-stretch: 1;
+                current: InspectorState.project.fps;
+                options: [{ value: "24", label: "24 fps" }, { value: "25", label: "25 fps" }, { value: "30", label: "30 fps" }, { value: "50", label: "50 fps" }, { value: "60", label: "60 fps" }];
+                selected(value) => { InspectorState.choose("fps", value); }
+            }
+        }
+        Field {
+            label: "Background";
+            ColorField {
+                horizontal-stretch: 1;
+                value: InspectorState.project.background;
+                hex: InspectorState.project.background-hex;
+                started => { InspectorState.begin(); }
+                picked(c) => { InspectorState.color("project.background", c); }
+                hex-entered(value) => { InspectorState.hex("project.background", value); }
+            }
+        }
+    }
+    Section {
+        SectionHeader { title: "Overview"; }
+        for stat in InspectorState.stats: Rectangle {
+            height: 32px;
+            HorizontalLayout {
+                Text { horizontal-stretch: 1; text: stat.label; color: Theme.muted; font-size: Theme.text-xs; vertical-alignment: center; }
+                Text { text: stat.value; color: Theme.fg; font-size: Theme.text-xs; vertical-alignment: center; }
+            }
+            Rectangle { y: parent.height - 1px; height: 1px; background: Theme.line; }
+        }
+    }
+    HorizontalLayout {
+        padding: 16px;
+        Text {
+            text: "Select a clip on the timeline or in the preview to edit it.";
+            color: Theme.faint;
+            font-size: Theme.text-2xs;
+            wrap: word-wrap;
+        }
+    }
+}
+
+export component Inspector inherits Surface {
+    // A new tab or another clip starts at the top, not where the last one was scrolled.
+    property <string> shown-tab: InspectorState.tab;
+    property <string> shown-item: InspectorState.item.title + InspectorState.item.kind;
+    changed shown-tab => { scroll.content-y = 0; }
+    changed shown-item => { scroll.content-y = 0; }
+    property <[Choice]> tabs: InspectorState.item.kind == 0 ? [{ value: "main", label: "Video" }, { value: "animation", label: "Animation" }, { value: "adjust", label: "Adjust" }, { value: "audio", label: "Audio" }, { value: "speed", label: "Speed" }]
+        : InspectorState.item.kind == 1 ? [{ value: "main", label: "Image" }, { value: "animation", label: "Animation" }, { value: "adjust", label: "Adjust" }]
+        : InspectorState.item.kind == 3 ? [{ value: "main", label: "Text" }, { value: "animation", label: "Animation" }, { value: "transform", label: "Transform" }]
+        : InspectorState.item.kind == 4 ? [{ value: "main", label: "Shape" }, { value: "animation", label: "Animation" }]
+        : [{ value: "main", label: "Audio" }, { value: "speed", label: "Speed" }];
+    property <color> accent: InspectorState.item.kind == 0 ? Theme.clip-video : InspectorState.item.kind == 1 ? Theme.clip-image : InspectorState.item.kind == 2 ? Theme.clip-audio : InspectorState.item.kind == 3 ? Theme.clip-text : Theme.clip-shape;
+
+    VerticalLayout {
+        if InspectorState.item.has: Rectangle {
+            height: 48px;
+            HorizontalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                spacing: 10px;
+                VerticalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: 28px;
+                        height: 28px;
+                        border-radius: Theme.radius;
+                        background: root.accent.with-alpha(0.25);
+                        Icon {
+                            size: 14px;
+                            colorize: root.accent;
+                            source: InspectorState.item.kind == 0 ? Icons.film : InspectorState.item.kind == 1 ? Icons.image : InspectorState.item.kind == 2 ? Icons.audio-lines : InspectorState.item.kind == 3 ? Icons.type : Icons.shapes;
+                        }
+                    }
+                }
+                Text {
+                    horizontal-stretch: 1;
+                    text: InspectorState.item.count > 1 ? InspectorState.item.count + " clips selected" : InspectorState.item.title;
+                    color: Theme.fg;
+                    font-size: Theme.text-sm;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
+        }
+        if InspectorState.item.has: Rectangle {
+            height: tabs-layout.preferred-height;
+            tabs-layout := VerticalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                padding-bottom: 12px;
+                Tabs { options: root.tabs; }
+            }
+            Rectangle { y: parent.height - 1px; height: 1px; background: Theme.line; }
+        }
+        if !InspectorState.item.has: Rectangle {
+            height: 48px;
+            Text { x: 16px; text: "Project settings"; color: Theme.fg; font-size: Theme.text-sm; font-weight: 600; vertical-alignment: center; }
+            Rectangle { y: parent.height - 1px; height: 1px; background: Theme.line; }
+        }
+        scroll := ScrollView {
+            vertical-stretch: 1;
+            // Content is as wide as the panel; long values elide instead of widening it.
+            content-width: self.visible-width;
+            VerticalLayout {
+                width: scroll.visible-width;
+                alignment: start;
+                if !InspectorState.item.has: ProjectSection { }
+                if InspectorState.item.has && InspectorState.tab == "main" && InspectorState.item.kind == 3: TextSection { }
+                if InspectorState.item.has && InspectorState.tab == "main" && InspectorState.item.kind == 2: AudioSection { }
+                if InspectorState.item.has && InspectorState.tab == "main" && InspectorState.item.kind == 4: ShapeSection { }
+                if InspectorState.item.has && InspectorState.tab == "main" && (InspectorState.item.kind == 0 || InspectorState.item.kind == 1 || InspectorState.item.kind == 4): TransformSection { }
+                if InspectorState.item.has && InspectorState.tab == "main" && (InspectorState.item.kind == 0 || InspectorState.item.kind == 1): FrameSection { }
+                if InspectorState.item.has && InspectorState.tab == "transform": TransformSection { }
+                if InspectorState.item.has && InspectorState.tab == "animation": AnimationSection { }
+                if InspectorState.item.has && InspectorState.tab == "adjust": AdjustSection { }
+                if InspectorState.item.has && InspectorState.tab == "audio": AudioSection { }
+                if InspectorState.item.has && InspectorState.tab == "speed": SpeedSection { }
+            }
+        }
+    }
+}

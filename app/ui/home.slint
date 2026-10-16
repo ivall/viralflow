@@ -1,0 +1,395 @@
+import { Theme, Icons } from "theme.slint";
+import { Button, ButtonKind, ButtonSize, Icon, TextField, Menu, MenuEntry, Dialog, DialogFooter, ScrollView } from "widgets.slint";
+import { AutoEditDialog, AutoEditState } from "autoedit.slint";
+
+export struct ProjectCard {
+    id: string,
+    name: string,
+    edited: string,
+    duration: string,
+    aspect: string,
+    thumbnail: image,
+    has-thumbnail: bool,
+    width: int,
+    height: int,
+}
+
+export struct AspectCard {
+    width: int,
+    height: int,
+    label: string,
+    hint: string,
+}
+
+export global HomeState {
+    in property <[ProjectCard]> projects;
+    in property <[AspectCard]> aspects;
+    in property <bool> ffmpeg-missing;
+    in-out property <string> query;
+    callback create(int, int);
+    callback open(string);
+    callback rename(string, string);
+    callback duplicate(string);
+    callback remove(string);
+    callback export-file(string);
+    callback import-file();
+    callback auto-edit();
+    callback open-settings();
+    callback query-changed(string);
+}
+
+component AspectButton inherits Rectangle {
+    in property <AspectCard> card;
+    callback clicked;
+    height: 132px;
+    border-radius: Theme.radius;
+    border-width: 1px;
+    border-color: touch.has-hover ? Theme.accent.with-alpha(0.6) : Theme.line;
+    background: touch.has-hover ? Theme.raised : Theme.panel;
+    animate background, border-color { duration: Theme.fast; }
+    VerticalLayout {
+        padding: 12px;
+        Rectangle {
+            vertical-stretch: 1;
+            Rectangle {
+                width: root.card.width >= root.card.height ? 64px : 64px * root.card.width / root.card.height;
+                height: root.card.height >= root.card.width ? 56px : 56px * root.card.height / root.card.width;
+                border-radius: 3px;
+                border-width: 2px;
+                border-color: touch.has-hover ? Theme.accent : Theme.muted.with-alpha(0.7);
+            }
+        }
+        Text {
+            text: root.card.label;
+            color: Theme.fg;
+            font-size: Theme.text-xs;
+            font-weight: 600;
+        }
+        Text {
+            text: root.card.hint;
+            color: Theme.muted;
+            font-size: Theme.text-2xs;
+            overflow: elide;
+        }
+    }
+    touch := TouchArea { clicked => { root.clicked(); } }
+}
+
+component Badge inherits Rectangle {
+    in property <string> text;
+    in property <float> alpha: 0.7;
+    border-radius: 4px;
+    background: #000000.with-alpha(root.alpha);
+    width: label.preferred-width + 12px;
+    height: 20px;
+    label := Text {
+        text: root.text;
+        color: #ffffffe6;
+        font-size: Theme.text-2xs;
+        vertical-alignment: center;
+        horizontal-alignment: center;
+    }
+}
+
+component ProjectTile inherits VerticalLayout {
+    in property <ProjectCard> project;
+    callback open;
+    callback menu(length, length);
+    spacing: 8px;
+    property <bool> portrait: root.project.height > root.project.width;
+    thumb := Rectangle {
+        height: self.width * 3 / 4;
+        border-radius: Theme.radius;
+        border-width: 1px;
+        border-color: tile-touch.has-hover ? Theme.line-strong : Theme.line;
+        background: Theme.panel;
+        clip: true;
+        if root.project.has-thumbnail: Image {
+            source: root.project.thumbnail;
+            width: parent.width;
+            height: parent.height;
+            image-fit: contain;
+        }
+        if !root.project.has-thumbnail: Rectangle {
+            height: root.portrait ? parent.height * 0.75 : parent.width * 0.75 * root.project.height / max(1, root.project.width);
+            width: root.portrait ? self.height * root.project.width / max(1, root.project.height) : parent.width * 0.75;
+            border-radius: 6px;
+            border-width: 1px;
+            border-color: Theme.line;
+            background: Theme.app;
+        }
+        Badge {
+            x: 8px;
+            y: 8px;
+            text: root.project.aspect;
+            alpha: 0.6;
+        }
+        Badge {
+            x: parent.width - self.width - 8px;
+            y: parent.height - self.height - 8px;
+            text: root.project.duration;
+        }
+        tile-touch := TouchArea {
+            clicked => { root.open(); }
+            pointer-event(event) => {
+                if event.kind == PointerEventKind.down && event.button == PointerEventButton.right {
+                    root.menu(self.mouse-x, self.mouse-y);
+                }
+            }
+        }
+    }
+    HorizontalLayout {
+        spacing: 4px;
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 2px;
+            Text {
+                text: root.project.name;
+                color: Theme.fg;
+                font-size: Theme.text-xs;
+                font-weight: 500;
+                overflow: elide;
+            }
+            Text {
+                text: root.project.edited;
+                color: Theme.muted;
+                font-size: Theme.text-2xs;
+            }
+            name-touch := TouchArea { clicked => { root.open(); } }
+        }
+        more := Button {
+            icon: Icons.more-horizontal;
+            kind: ButtonKind.ghost;
+            size: ButtonSize.sm;
+            tooltip: "Project actions";
+            opacity: tile-touch.has-hover || name-touch.has-hover || self.hovered ? 1 : 0;
+            clicked => { root.menu(self.x, thumb.height + 8px + self.height); }
+        }
+    }
+}
+
+export component HomeView inherits Rectangle {
+    background: Theme.app;
+    property <string> menu-for;
+    property <string> renaming;
+    property <string> rename-draft;
+    property <string> deleting;
+    property <string> deleting-name;
+    property <length> content-width: min(1200px, self.width) - 64px;
+    property <int> columns: max(1, floor((root.content-width + 16px) / (190px + 16px)));
+    property <int> aspect-columns: max(1, floor((root.content-width + 12px) / (132px + 12px)));
+
+    property <string> menu-name;
+
+    ScrollView {
+        VerticalLayout {
+            alignment: start;
+            padding-top: 32px;
+            padding-bottom: 64px;
+            padding-left: max(32px, (root.width - 1200px) / 2 + 32px);
+            padding-right: max(32px, (root.width - 1200px) / 2 + 32px);
+            spacing: 0px;
+
+            if HomeState.ffmpeg-missing: Rectangle {
+                border-radius: Theme.radius;
+                border-width: 1px;
+                border-color: Theme.warn.with-alpha(0.3);
+                background: Theme.warn.with-alpha(0.07);
+                HorizontalLayout {
+                    padding: 12px;
+                    padding-left: 16px;
+                    spacing: 12px;
+                    VerticalLayout { alignment: start; padding-top: 2px; Icon { source: Icons.triangle-alert; colorize: Theme.warn; } }
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        spacing: 2px;
+                        Text { text: "FFmpeg 8 libraries were not found."; color: Theme.fg; font-size: Theme.text-xs; font-weight: 500; }
+                        Text {
+                            text: "Install the FFmpeg 8 shared build (for example winget install Gyan.FFmpeg.Shared) and restart ViralFlow.";
+                            color: Theme.muted;
+                            font-size: Theme.text-xs;
+                            wrap: word-wrap;
+                        }
+                    }
+                    Button { text: "Open settings"; kind: ButtonKind.outline; size: ButtonSize.sm; clicked => { HomeState.open-settings(); } }
+                }
+            }
+            if HomeState.ffmpeg-missing: Rectangle { height: 24px; }
+
+            Text {
+                text: "New project";
+                color: Theme.fg;
+                font-size: Theme.text-lg;
+                font-weight: 600;
+            }
+            Rectangle { height: 16px; }
+            aspect-grid := Rectangle {
+                property <length> cell: (root.content-width - (root.aspect-columns - 1) * 12px) / root.aspect-columns;
+                height: ceil(HomeState.aspects.length / root.aspect-columns) * (132px + 12px) - 12px;
+                for card[index] in HomeState.aspects: AspectButton {
+                    x: mod(index, root.aspect-columns) * (aspect-grid.cell + 12px);
+                    y: floor(index / root.aspect-columns) * (132px + 12px);
+                    width: aspect-grid.cell;
+                    card: card;
+                    clicked => { HomeState.create(card.width, card.height); }
+                }
+            }
+            Rectangle { height: 12px; }
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: start;
+                Button { text: "Open project file"; icon: Icons.file-up; kind: ButtonKind.outline; clicked => { HomeState.import-file(); } }
+                Button { text: "Auto-edit voiceovers"; icon: Icons.audio-lines; kind: ButtonKind.outline; clicked => { HomeState.auto-edit(); } }
+            }
+
+            Rectangle { height: 40px; }
+            HorizontalLayout {
+                spacing: 12px;
+                Text { text: "Projects"; color: Theme.fg; font-size: Theme.text-sm; font-weight: 600; vertical-alignment: center; }
+                Text { text: HomeState.projects.length; color: Theme.muted; font-size: Theme.text-2xs; vertical-alignment: center; }
+                Rectangle { horizontal-stretch: 1; }
+                TextField {
+                    width: 256px;
+                    icon: Icons.search;
+                    placeholder: "Search projects";
+                    text: HomeState.query;
+                    edited(value) => { HomeState.query-changed(value); }
+                }
+            }
+            Rectangle { height: 16px; }
+
+            if HomeState.projects.length > 0: project-grid := Rectangle {
+                property <length> cell: (root.content-width - (root.columns - 1) * 16px) / root.columns;
+                property <length> row-height: self.cell * 3 / 4 + 8px + 40px + 24px;
+                height: ceil(HomeState.projects.length / root.columns) * self.row-height;
+                for project[index] in HomeState.projects: ProjectTile {
+                    x: mod(index, root.columns) * (project-grid.cell + 16px);
+                    y: floor(index / root.columns) * project-grid.row-height;
+                    width: project-grid.cell;
+                    project: project;
+                    open => { HomeState.open(project.id); }
+                    menu(px, py) => {
+                        root.menu-for = project.id;
+                        root.menu-name = project.name;
+                        project-menu.open(self.x + px, self.y + py + 0px);
+                    }
+                }
+                project-menu := Menu {
+                    entries: [
+                        { id: "open", label: "Open", enabled: true },
+                        { id: "rename", label: "Rename", enabled: true },
+                        { id: "duplicate", label: "Duplicate", enabled: true },
+                        { id: "export", label: "Save project file…", enabled: true },
+                        { separator: true },
+                        { id: "delete", label: "Delete", danger: true, enabled: true },
+                    ];
+                    activated(action) => {
+                        if action == "open" { HomeState.open(root.menu-for); }
+                        if action == "rename" {
+                            root.rename-draft = root.menu-name;
+                            root.renaming = root.menu-for;
+                        }
+                        if action == "duplicate" { HomeState.duplicate(root.menu-for); }
+                        if action == "export" { HomeState.export-file(root.menu-for); }
+                        if action == "delete" {
+                            root.deleting-name = root.menu-name;
+                            root.deleting = root.menu-for;
+                        }
+                    }
+                }
+            }
+
+            if HomeState.projects.length == 0: Rectangle {
+                height: 220px;
+                border-radius: Theme.radius;
+                border-width: 1px;
+                border-color: Theme.line;
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 4px;
+                    HorizontalLayout { alignment: center; Icon { source: Icons.folder-open; size: 24px; colorize: Theme.faint; } }
+                    Rectangle { height: 8px; }
+                    Text {
+                        text: HomeState.query != "" ? "No project matches your search" : "No projects yet";
+                        color: Theme.fg;
+                        font-size: Theme.text-xs;
+                        font-weight: 500;
+                        horizontal-alignment: center;
+                    }
+                    Text {
+                        text: HomeState.query != "" ? "Try a different name." : "Pick a format above to start editing.";
+                        color: Theme.muted;
+                        font-size: Theme.text-2xs;
+                        horizontal-alignment: center;
+                    }
+                    if HomeState.query == "": HorizontalLayout {
+                        alignment: center;
+                        padding-top: 12px;
+                        Button {
+                            text: "New 9:16 project";
+                            icon: Icons.plus;
+                            kind: ButtonKind.primary;
+                            size: ButtonSize.sm;
+                            clicked => { HomeState.create(1080, 1920); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if root.renaming != "": Dialog {
+        title: "Rename project";
+        card-width: 420px;
+        dismissed => { root.renaming = ""; }
+        VerticalLayout {
+            padding-left: 20px;
+            padding-right: 20px;
+            padding-top: 16px;
+            padding-bottom: 16px;
+            name-field := TextField {
+                text: root.rename-draft;
+                edited(value) => { root.rename-draft = value; }
+                accepted(value) => {
+                    if value != "" {
+                        HomeState.rename(root.renaming, value);
+                        root.renaming = "";
+                    }
+                }
+                init => { self.focus-input(); self.select-all(); }
+            }
+        }
+        DialogFooter {
+            Button { text: "Cancel"; kind: ButtonKind.ghost; clicked => { root.renaming = ""; } }
+            Button {
+                text: "Rename";
+                kind: ButtonKind.primary;
+                enabled: root.rename-draft != "";
+                clicked => {
+                    HomeState.rename(root.renaming, root.rename-draft);
+                    root.renaming = "";
+                }
+            }
+        }
+    }
+
+    if root.deleting != "": Dialog {
+        title: "Delete project?";
+        description: "“" + root.deleting-name + "” will be deleted. Your media files stay where they are.";
+        card-width: 440px;
+        dismissed => { root.deleting = ""; }
+        DialogFooter {
+            Button { text: "Cancel"; kind: ButtonKind.ghost; clicked => { root.deleting = ""; } }
+            Button {
+                text: "Delete project";
+                kind: ButtonKind.danger;
+                clicked => {
+                    HomeState.remove(root.deleting);
+                    root.deleting = "";
+                }
+            }
+        }
+    }
+
+    if AutoEditState.open: AutoEditDialog { }
+}

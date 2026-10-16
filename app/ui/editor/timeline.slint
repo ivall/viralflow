@@ -1,0 +1,624 @@
+import { Theme, Icons, Platform } from "../theme.slint";
+import { Button, ButtonKind, ButtonSize, Surface, Divider, Slider, Menu, MenuEntry, Icon, TextField } from "../widgets.slint";
+import { PointerPhase, DropProbe, EditorState } from "state.slint";
+
+export struct TrackRow {
+    id: string,
+    name: string,
+    // 0 video, 1 text, 2 audio
+    kind: int,
+    top: length,
+    height: length,
+    hidden: bool,
+    muted: bool,
+    locked: bool,
+    dragging: bool,
+    drop-hint: bool,
+}
+
+export struct ClipView {
+    id: string,
+    x: length,
+    y: length,
+    width: length,
+    height: length,
+    // 0 video, 1 image, 2 audio, 3 text, 4 shape
+    kind: int,
+    label: string,
+    color: color,
+    selected: bool,
+    locked: bool,
+    hidden: bool,
+    muted: bool,
+    missing: bool,
+    speed: string,
+    fade-in: length,
+    fade-out: length,
+    picture: image,
+    has-picture: bool,
+    picture-x: length,
+    picture-width: length,
+    effect: bool,
+    effect-x: length,
+    effect-width: length,
+    effect-label: string,
+    drop-target: bool,
+}
+
+export struct KeyMark {
+    x: length,
+    y: length,
+    active: bool,
+}
+
+export struct SeamView {
+    item: string,
+    x: length,
+    y: length,
+    width: length,
+    height: length,
+    has: bool,
+    label: string,
+    active: bool,
+    editable: bool,
+}
+
+export struct Tick {
+    x: length,
+    major: bool,
+    label: string,
+}
+
+export global TimelineState {
+    in property <[TrackRow]> rows;
+    in property <[ClipView]> clips;
+    in property <[KeyMark]> keyframes;
+    in property <[SeamView]> seams;
+    in property <[Tick]> ticks;
+    in property <length> playhead: -100px;
+    in property <length> snap-line: -100px;
+    in property <length> rows-height;
+    in property <length> marquee-x;
+    in property <length> marquee-y;
+    in property <length> marquee-width;
+    in property <length> marquee-height;
+    in property <length> drop-x: -1px;
+    in property <length> drop-y;
+    in property <length> drop-width;
+    in property <length> drop-height;
+    in property <bool> drop-line;
+    in property <length> track-drop-line: -100px;
+    in property <bool> snapping;
+    in property <float> zoom-log;
+    in property <bool> has-selection;
+    in property <bool> has-primary;
+    in property <bool> primary-visual;
+    in property <bool> can-undo;
+    in property <bool> can-redo;
+    in property <int> cursor;
+    in property <[MenuEntry]> context-entries;
+    in property <bool> transition-drag;
+    in-out property <string> renaming-track;
+
+    callback action(string);
+    callback zoom-to(float);
+    callback lanes-size(length, length);
+    callback lanes-pointer(PointerPhase, length, length, bool, bool, bool);
+    callback lanes-hover(length, length);
+    callback lanes-context(length, length);
+    callback ruler-pointer(PointerPhase, length, bool);
+    callback scroll(length, length, bool, bool, length);
+    callback header-pointer(PointerPhase, string, length);
+    callback track-toggle(string, string);
+    callback track-action(string, string);
+    callback rename-track(string, string);
+    callback context-action(string);
+    callback add-track(string);
+}
+
+component ToolButton inherits Button {
+    kind: ButtonKind.ghost;
+}
+
+component TrackHeader inherits Rectangle {
+    in property <TrackRow> track;
+    property <bool> hovered: header-touch.has-hover;
+    y: root.track.top;
+    height: root.track.height;
+    border-radius: 2px;
+    background: root.track.dragging ? Theme.hover : root.hovered ? Theme.hover.with-alpha(0.4) : transparent;
+    opacity: root.track.hidden || root.track.dragging ? 0.6 : 1;
+
+    header-touch := TouchArea {
+        mouse-cursor: grab;
+        pointer-event(event) => {
+            if event.button == PointerEventButton.left {
+                if event.kind == PointerEventKind.down { TimelineState.header-pointer(PointerPhase.down, root.track.id, self.mouse-y + root.track.top); }
+                if event.kind == PointerEventKind.up { TimelineState.header-pointer(PointerPhase.up, root.track.id, self.mouse-y + root.track.top); }
+            }
+        }
+        moved => {
+            if self.pressed { TimelineState.header-pointer(PointerPhase.move, root.track.id, self.mouse-y + root.track.top); }
+        }
+        double-clicked => { TimelineState.renaming-track = root.track.id; }
+    }
+
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 6px;
+        VerticalLayout {
+            alignment: center;
+            Icon {
+                size: 16px;
+                colorize: Theme.muted;
+                source: root.hovered ? Icons.grip-vertical : root.track.kind == 0 ? Icons.film : root.track.kind == 1 ? Icons.type : Icons.audio-lines;
+            }
+        }
+        if TimelineState.renaming-track != root.track.id: Text {
+            horizontal-stretch: 1;
+            text: root.track.name;
+            color: root.hovered ? Theme.fg : Theme.muted;
+            font-size: Theme.text-xs;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+        if TimelineState.renaming-track == root.track.id: VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            TextField {
+                height: 28px;
+                text: root.track.name;
+                init => { self.focus-input(); self.select-all(); }
+                accepted(value) => { TimelineState.rename-track(root.track.id, value); TimelineState.renaming-track = ""; }
+                focus-lost(value) => { TimelineState.rename-track(root.track.id, value); TimelineState.renaming-track = ""; }
+            }
+        }
+        if root.track.kind != 2: VerticalLayout {
+            alignment: center;
+            Button {
+                size: ButtonSize.sm;
+                kind: ButtonKind.ghost;
+                width: 24px;
+                height: 24px;
+                icon: root.track.hidden ? Icons.eye-off : Icons.eye;
+                tooltip: root.track.hidden ? "Show track" : "Hide track";
+                clicked => { TimelineState.track-toggle(root.track.id, "hidden"); }
+            }
+        }
+        if root.track.kind != 1: VerticalLayout {
+            alignment: center;
+            Button {
+                size: ButtonSize.sm;
+                kind: ButtonKind.ghost;
+                width: 24px;
+                height: 24px;
+                icon: root.track.muted ? Icons.volume-x : Icons.volume;
+                tooltip: root.track.muted ? "Unmute track" : "Mute track";
+                clicked => { TimelineState.track-toggle(root.track.id, "muted"); }
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            Button {
+                size: ButtonSize.sm;
+                kind: ButtonKind.ghost;
+                width: 24px;
+                height: 24px;
+                icon: root.track.locked ? Icons.lock : Icons.unlock;
+                tooltip: root.track.locked ? "Unlock track" : "Lock track";
+                clicked => { TimelineState.track-toggle(root.track.id, "locked"); }
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            more := Button {
+                size: ButtonSize.sm;
+                kind: ButtonKind.ghost;
+                width: 20px;
+                height: 20px;
+                icon: Icons.more-horizontal;
+                opacity: root.hovered || self.hovered ? 1 : 0;
+                clicked => { track-menu.open(self.x - 150px, self.y + self.height); }
+            }
+        }
+    }
+    track-menu := Menu {
+        menu-width: 170px;
+        entries: [
+            { id: "rename", label: "Rename", enabled: true },
+            { id: "up", label: "Move up", enabled: true },
+            { id: "down", label: "Move down", enabled: true },
+            { separator: true },
+            { id: "delete", label: "Delete track", danger: true, enabled: true },
+        ];
+        activated(action) => {
+            if action == "rename" { TimelineState.renaming-track = root.track.id; } else { TimelineState.track-action(root.track.id, action); }
+        }
+    }
+}
+
+component Clip inherits Rectangle {
+    in property <ClipView> view;
+    x: root.view.x;
+    y: root.view.y;
+    width: root.view.width;
+    height: root.view.height;
+    border-radius: 6px;
+    clip: true;
+    background: root.view.color;
+    opacity: root.view.hidden ? 0.4 : 1;
+    drop-shadow-color: root.view.selected ? #ffffff99 : root.view.drop-target ? #c084fc8c : transparent;
+    drop-shadow-blur: root.view.selected || root.view.drop-target ? 2px : 0px;
+
+    if root.view.has-picture: Image {
+        x: root.view.picture-x;
+        y: 0;
+        width: root.view.picture-width;
+        height: parent.height;
+        source: root.view.picture;
+        image-fit: fill;
+    }
+    if root.view.kind == 0 || root.view.kind == 1: Rectangle {
+        height: parent.height * 0.6;
+        y: 0;
+        background: @linear-gradient(180deg, #00000073 0%, transparent 100%);
+    }
+    if root.view.fade-in > 0: Rectangle {
+        x: 0;
+        width: root.view.fade-in;
+        background: @linear-gradient(90deg, #00000080 0%, transparent 100%);
+    }
+    if root.view.fade-out > 0: Rectangle {
+        x: parent.width - root.view.fade-out;
+        width: root.view.fade-out;
+        background: @linear-gradient(270deg, #00000080 0%, transparent 100%);
+    }
+    HorizontalLayout {
+        y: 2px;
+        height: 18px;
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 6px;
+        alignment: start;
+        VerticalLayout {
+            alignment: center;
+            Icon {
+                size: 14px;
+                colorize: #ffffffe6;
+                source: root.view.kind == 0 ? Icons.film : root.view.kind == 1 ? Icons.image : root.view.kind == 2 ? Icons.audio-lines : root.view.kind == 3 ? Icons.type : Icons.shapes;
+            }
+        }
+        Text {
+            text: root.view.label;
+            color: #ffffff;
+            font-size: Theme.text-xs;
+            font-weight: 500;
+            vertical-alignment: center;
+            overflow: elide;
+            max-width: root.width - 40px;
+        }
+        if root.view.speed != "": Rectangle {
+            border-radius: 4px;
+            background: #00000080;
+            width: speed-text.preferred-width + 8px;
+            speed-text := Text { text: root.view.speed; color: #ffffff; font-size: 11px; vertical-alignment: center; horizontal-alignment: center; }
+        }
+        if root.view.muted: VerticalLayout { alignment: center; Icon { size: 12px; source: Icons.volume-x; colorize: Theme.warn; } }
+    }
+    if root.view.missing: Text {
+        x: 4px;
+        y: parent.height - 18px;
+        width: parent.width - 8px;
+        text: "Media missing";
+        color: Theme.danger;
+        font-size: 11px;
+        overflow: elide;
+    }
+    if root.view.effect: Rectangle {
+        x: root.view.effect-x;
+        y: parent.height - 18px;
+        width: max(4px, root.view.effect-width);
+        height: 16px;
+        border-radius: 4px;
+        border-width: 1px;
+        border-color: #c084fccc;
+        background: #7c3aede6;
+        HorizontalLayout {
+            padding-left: 6px;
+            spacing: 4px;
+            alignment: start;
+            VerticalLayout { alignment: center; Icon { size: 12px; source: Icons.sparkles; colorize: #ffffff; } }
+            Text { text: root.view.effect-label; color: #ffffff; font-size: 11px; font-weight: 500; vertical-alignment: center; overflow: elide; }
+        }
+    }
+    // Selection and hover outline.
+    Rectangle {
+        border-radius: 6px;
+        border-width: 1px;
+        border-color: root.view.selected ? #ffffff : root.view.drop-target ? #c084fc : transparent;
+    }
+    if root.view.selected && !root.view.locked: Rectangle {
+        x: 0;
+        width: 8px;
+        background: #ffffffb3;
+    }
+    if root.view.selected && !root.view.locked: Rectangle {
+        x: parent.width - 8px;
+        width: 8px;
+        background: #ffffffb3;
+    }
+}
+
+export component Timeline inherits Surface {
+    property <[MenuEntry]> add-track-entries: [
+        { id: "video", label: "Video track", enabled: true },
+        { id: "text", label: "Text track", enabled: true },
+        { id: "audio", label: "Audio track", enabled: true },
+    ];
+
+    VerticalLayout {
+        // Toolbar
+        Rectangle {
+            height: 48px;
+            HorizontalLayout {
+                padding-left: 10px;
+                padding-right: 10px;
+                spacing: 2px;
+                VerticalLayout { alignment: center; ToolButton { icon: Icons.undo; tooltip: ("Undo (" + Platform.mod + "+Z)"); enabled: TimelineState.can-undo; clicked => { TimelineState.action("undo"); } } }
+                VerticalLayout { alignment: center; ToolButton { icon: Icons.redo; tooltip: ("Redo (" + Platform.mod + "+Shift+Z)"); enabled: TimelineState.can-redo; clicked => { TimelineState.action("redo"); } } }
+                VerticalLayout { alignment: center; padding-left: 6px; padding-right: 6px; Divider { } }
+                VerticalLayout { alignment: center; ToolButton { icon: Icons.scissors; tooltip: "Split (S)"; clicked => { TimelineState.action("split"); } } }
+                VerticalLayout { alignment: center; ToolButton { icon: Icons.arrow-left-to-line; tooltip: "Trim start to playhead (Q)"; enabled: TimelineState.has-primary; clicked => { TimelineState.action("trim-start"); } } }
+                VerticalLayout { alignment: center; ToolButton { icon: Icons.arrow-right-to-line; tooltip: "Trim end to playhead (W)"; enabled: TimelineState.has-primary; clicked => { TimelineState.action("trim-end"); } } }
+                VerticalLayout { alignment: center; ToolButton { icon: Icons.copy; tooltip: ("Duplicate (" + Platform.mod + "+D)"); enabled: TimelineState.has-selection; clicked => { TimelineState.action("duplicate"); } } }
+                VerticalLayout { alignment: center; ToolButton { icon: Icons.trash; tooltip: "Delete (Del)"; enabled: TimelineState.has-selection; clicked => { TimelineState.action("delete"); } } }
+                VerticalLayout { alignment: center; padding-left: 6px; padding-right: 6px; Divider { } }
+                VerticalLayout { alignment: center; ToolButton { icon: Icons.diamond; tooltip: "Add or remove keyframe (K)"; enabled: TimelineState.primary-visual; clicked => { TimelineState.action("keyframe"); } } }
+                VerticalLayout { alignment: center; ToolButton { icon: Icons.blend; tooltip: "Transitions"; clicked => { TimelineState.action("transitions"); } } }
+                Rectangle { horizontal-stretch: 1; }
+                VerticalLayout { alignment: center; ToolButton { icon: Icons.magnet; active: TimelineState.snapping; tooltip: TimelineState.snapping ? "Snapping on" : "Snapping off"; clicked => { TimelineState.action("snap"); } } }
+                VerticalLayout { alignment: center; padding-left: 6px; padding-right: 6px; Divider { } }
+                VerticalLayout { alignment: center; ToolButton { icon: Icons.zoom-out; tooltip: "Zoom out (-)"; clicked => { TimelineState.action("zoom-out"); } } }
+                VerticalLayout {
+                    alignment: center;
+                    Slider {
+                        width: 112px;
+                        minimum: 0.693;
+                        maximum: 6.397;
+                        step: 0.01;
+                        value: TimelineState.zoom-log;
+                        changed(value) => { TimelineState.zoom-to(value); }
+                    }
+                }
+                VerticalLayout { alignment: center; ToolButton { icon: Icons.zoom-in; tooltip: "Zoom in (=)"; clicked => { TimelineState.action("zoom-in"); } } }
+                VerticalLayout { alignment: center; ToolButton { icon: Icons.maximize; tooltip: "Fit timeline (Shift+Z)"; clicked => { TimelineState.action("fit"); } } }
+            }
+            Rectangle { y: parent.height - 1px; height: 1px; background: Theme.line; }
+        }
+
+        HorizontalLayout {
+            vertical-stretch: 1;
+            // Track headers
+            Rectangle {
+                width: 200px;
+                VerticalLayout {
+                    Rectangle {
+                        height: 30px;
+                        HorizontalLayout {
+                            padding-left: 8px;
+                            alignment: start;
+                            VerticalLayout {
+                                alignment: center;
+                                add := Button {
+                                    text: "Add track";
+                                    icon: Icons.plus;
+                                    kind: ButtonKind.ghost;
+                                    size: ButtonSize.sm;
+                                    clicked => { add-menu.open(self.x, self.y + self.height + 4px); }
+                                }
+                            }
+                        }
+                        add-menu := Menu {
+                            menu-width: 170px;
+                            entries: root.add-track-entries;
+                            activated(kind) => { TimelineState.add-track(kind); }
+                        }
+                        Rectangle { y: parent.height - 1px; height: 1px; background: Theme.line; }
+                    }
+                    header-column := Rectangle {
+                        vertical-stretch: 1;
+                        clip: true;
+                        for row in TimelineState.rows: TrackHeader { track: row; }
+                        if TimelineState.track-drop-line > -50px: Rectangle {
+                            x: 4px;
+                            width: parent.width - 8px;
+                            y: TimelineState.track-drop-line - 1px;
+                            height: 2px;
+                            border-radius: 1px;
+                            background: Theme.accent;
+                        }
+                    }
+                }
+                Rectangle { x: parent.width - 1px; width: 1px; background: Theme.line; }
+            }
+
+            // Lanes
+            lanes := Rectangle {
+                horizontal-stretch: 1;
+                clip: true;
+                changed width => { TimelineState.lanes-size(self.width, self.height); }
+                changed height => { TimelineState.lanes-size(self.width, self.height); }
+                init => { TimelineState.lanes-size(self.width, self.height); }
+
+                // Ruler
+                Rectangle {
+                    y: 0;
+                    height: 30px;
+                    background: Theme.panel;
+                    for tick in TimelineState.ticks: Rectangle {
+                        x: tick.x;
+                        width: 1px;
+                        y: parent.height - self.height;
+                        height: tick.major ? 10px : 6px;
+                        background: tick.major ? Theme.line-strong : Theme.line;
+                    }
+                    for tick in TimelineState.ticks: Text {
+                        visible: tick.major;
+                        x: tick.x + 4px;
+                        y: 4px;
+                        text: tick.label;
+                        color: Theme.faint;
+                        font-size: 11px;
+                    }
+                    Rectangle { y: parent.height - 1px; height: 1px; background: Theme.line; }
+                    ruler-touch := TouchArea {
+                        mouse-cursor: ew-resize;
+                        pointer-event(event) => {
+                            if event.button == PointerEventButton.left {
+                                if event.kind == PointerEventKind.down { TimelineState.ruler-pointer(PointerPhase.down, self.mouse-x, event.modifiers.shift); }
+                                if event.kind == PointerEventKind.up { TimelineState.ruler-pointer(PointerPhase.up, self.mouse-x, event.modifiers.shift); }
+                            }
+                        }
+                        moved => {
+                            if self.pressed { TimelineState.ruler-pointer(PointerPhase.move, self.mouse-x, false); }
+                        }
+                        scroll-event(event) => {
+                            TimelineState.scroll(event.delta-x, event.delta-y, event.modifiers.control, event.modifiers.shift, self.mouse-x);
+                            accept
+                        }
+                    }
+                }
+
+                area := Rectangle {
+                    y: 30px;
+                    height: parent.height - 30px;
+                    clip: true;
+                    for row in TimelineState.rows: Rectangle {
+                        y: row.top;
+                        height: row.height;
+                        border-radius: 2px;
+                        background: row.drop-hint ? Theme.accent.with-alpha(0.06) : Theme.app.with-alpha(0.4);
+                        opacity: row.dragging ? 0.5 : 1;
+                    }
+                    for item in TimelineState.clips: Clip { view: item; }
+                    for mark in TimelineState.keyframes: Rectangle {
+                        x: mark.x - 4px;
+                        y: mark.y - 4px;
+                        width: 8px;
+                        height: 8px;
+                        transform-rotation: 45deg;
+                        border-width: 1px;
+                        border-color: #00000099;
+                        background: mark.active ? Theme.accent : #ffffffd9;
+                    }
+                    for seam in TimelineState.seams: Rectangle {
+                        x: seam.x;
+                        y: seam.y;
+                        width: seam.width;
+                        height: seam.height;
+                        border-radius: 4px;
+                        border-width: 1px;
+                        border-color: seam.has ? (seam.active ? #ffffff : Theme.accent.with-alpha(0.7)) : (TimelineState.transition-drag ? Theme.accent : Theme.line-strong);
+                        background: seam.has ? (seam.active ? Theme.accent.with-alpha(0.7) : #1c2a45e6) : Theme.panel;
+                        opacity: seam.has || TimelineState.transition-drag ? 1 : 0.85;
+                        HorizontalLayout {
+                            alignment: center;
+                            spacing: 4px;
+                            VerticalLayout { alignment: center; Icon { size: 12px; source: seam.has ? Icons.blend : Icons.plus; colorize: seam.has ? #ffffff : Theme.muted; } }
+                            if seam.has && seam.label != "": Text { text: seam.label; color: #ffffff; font-size: 10px; font-weight: 500; vertical-alignment: center; }
+                        }
+                    }
+                    if TimelineState.marquee-width > 0: Rectangle {
+                        x: TimelineState.marquee-x;
+                        y: TimelineState.marquee-y;
+                        width: TimelineState.marquee-width;
+                        height: TimelineState.marquee-height;
+                        border-width: 1px;
+                        border-color: Theme.accent;
+                        background: Theme.accent.with-alpha(0.1);
+                    }
+                    if TimelineState.drop-x >= 0px && !TimelineState.drop-line: Rectangle {
+                        x: TimelineState.drop-x;
+                        y: TimelineState.drop-y;
+                        width: max(6px, TimelineState.drop-width);
+                        height: TimelineState.drop-height;
+                        border-radius: 5px;
+                        border-width: 2px;
+                        border-color: Theme.accent;
+                        background: Theme.accent.with-alpha(0.15);
+                    }
+                    if TimelineState.drop-x >= 0px && TimelineState.drop-line: Rectangle {
+                        x: TimelineState.drop-x;
+                        y: TimelineState.drop-y - 1px;
+                        width: max(40px, TimelineState.drop-width);
+                        height: 2px;
+                        border-radius: 1px;
+                        background: Theme.accent;
+                    }
+                    if TimelineState.track-drop-line > -50px: Rectangle {
+                        y: TimelineState.track-drop-line - 1px;
+                        height: 2px;
+                        background: Theme.accent;
+                    }
+                    if TimelineState.rows.length == 0: Text {
+                        text: "Drag media here or use the panels on the left";
+                        color: Theme.faint;
+                        font-size: Theme.text-xs;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    DropProbe { target: "timeline"; }
+                    area-touch := TouchArea {
+                        mouse-cursor: TimelineState.cursor == 1 ? MouseCursor.grab : TimelineState.cursor == 2 ? MouseCursor.ew-resize : TimelineState.cursor == 3 ? MouseCursor.not-allowed : TimelineState.cursor == 4 ? MouseCursor.pointer : MouseCursor.default;
+                        pointer-event(event) => {
+                            if event.button == PointerEventButton.left {
+                                if event.kind == PointerEventKind.down { EditorState.focus-request += 1; TimelineState.lanes-pointer(PointerPhase.down, self.mouse-x, self.mouse-y, event.modifiers.shift, event.modifiers.control || event.modifiers.meta, event.modifiers.alt); }
+                                if event.kind == PointerEventKind.up { TimelineState.lanes-pointer(PointerPhase.up, self.mouse-x, self.mouse-y, event.modifiers.shift, event.modifiers.control || event.modifiers.meta, event.modifiers.alt); }
+                            }
+                            if event.button == PointerEventButton.right && event.kind == PointerEventKind.down {
+                                TimelineState.lanes-context(self.mouse-x, self.mouse-y);
+                                context-menu.open(self.mouse-x, self.mouse-y + 30px);
+                            }
+                            if event.kind == PointerEventKind.move && !self.pressed {
+                                TimelineState.lanes-hover(self.mouse-x, self.mouse-y);
+                            }
+                        }
+                        moved => {
+                            if self.pressed { TimelineState.lanes-pointer(PointerPhase.move, self.mouse-x, self.mouse-y, false, false, false); }
+                        }
+                        double-clicked => { TimelineState.lanes-pointer(PointerPhase.double, self.mouse-x, self.mouse-y, false, false, false); }
+                        scroll-event(event) => {
+                            TimelineState.scroll(event.delta-x, event.delta-y, event.modifiers.control || event.modifiers.meta, event.modifiers.shift, self.mouse-x);
+                            accept
+                        }
+                    }
+                }
+
+                if TimelineState.snap-line > -50px: Rectangle {
+                    x: TimelineState.snap-line;
+                    width: 1px;
+                    background: #f472b6;
+                }
+                if TimelineState.playhead > -50px: Rectangle {
+                    x: TimelineState.playhead;
+                    width: 1px;
+                    background: Theme.accent;
+                    Rectangle {
+                        x: -5px;
+                        y: 0;
+                        width: 11px;
+                        height: 12px;
+                        border-radius: 3px;
+                        background: Theme.accent;
+                    }
+                }
+                context-menu := Menu {
+                    menu-width: 210px;
+                    entries: TimelineState.context-entries;
+                    activated(id) => { TimelineState.context-action(id); }
+                }
+            }
+        }
+    }
+}

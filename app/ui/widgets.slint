@@ -1,0 +1,954 @@
+// Building blocks shared by every screen (counterparts of the old Ui* components).
+
+import { Theme, Icons } from "theme.slint";
+import { ScrollView } from "std-widgets.slint";
+
+export { ScrollView }
+
+export component Icon inherits Image {
+    in property <length> size: 16px;
+    width: size;
+    height: size;
+    image-fit: contain;
+    colorize: Theme.fg;
+}
+
+export enum ButtonKind { primary, secondary, ghost, danger, outline }
+export enum ButtonSize { sm, md, lg }
+
+export component Button inherits Rectangle {
+    in property <string> text;
+    in property <image> icon;
+    in property <ButtonKind> kind: ButtonKind.secondary;
+    in property <ButtonSize> size: ButtonSize.md;
+    in property <bool> active;
+    in property <bool> enabled: true;
+    in property <string> tooltip;
+    in property <bool> stretch;
+    out property <bool> hovered: touch.has-hover && root.enabled;
+    callback clicked;
+
+    accessible-role: button;
+    accessible-label: root.text != "" ? root.text : root.tooltip;
+    accessible-enabled: root.enabled;
+    accessible-action-default => { if root.enabled { root.clicked(); } }
+
+    property <bool> square: root.text == "";
+    property <length> side: root.size == ButtonSize.sm ? 28px : root.size == ButtonSize.lg ? 40px : 32px;
+    property <length> pad: root.square ? 0px : root.size == ButtonSize.sm ? 10px : root.size == ButtonSize.lg ? 16px : 14px;
+    property <color> ink: root.kind == ButtonKind.primary ? Theme.accent-ink
+        : root.kind == ButtonKind.danger ? Theme.danger
+        : (root.kind == ButtonKind.ghost && !root.active && !root.hovered) ? Theme.muted
+        : Theme.fg;
+
+    height: root.side;
+    min-width: root.square ? root.side : 0px;
+    horizontal-stretch: root.stretch ? 1 : 0;
+    border-radius: Theme.radius;
+    border-width: root.kind == ButtonKind.outline ? 1px : 0px;
+    border-color: root.hovered ? Theme.line-strong : Theme.line;
+    background: root.kind == ButtonKind.primary ? (root.hovered ? Theme.accent-hover : Theme.accent)
+        : root.kind == ButtonKind.secondary ? (root.hovered ? Theme.hover : Theme.raised)
+        : root.kind == ButtonKind.ghost ? ((root.active || root.hovered) ? Theme.hover : transparent)
+        : root.kind == ButtonKind.danger ? Theme.danger.with-alpha(root.hovered ? 0.25 : 0.15)
+        : (root.hovered ? Theme.raised : transparent);
+    opacity: root.enabled ? 1 : 0.4;
+    animate background, border-color { duration: Theme.fast; }
+
+    HorizontalLayout {
+        padding-left: root.pad;
+        padding-right: root.pad;
+        spacing: 6px;
+        alignment: center;
+        if root.icon.width > 0: VerticalLayout {
+            alignment: center;
+            Icon {
+                source: root.icon;
+                size: root.size == ButtonSize.lg ? 16px : root.square && root.size != ButtonSize.sm ? 16px : 14px;
+                colorize: root.ink;
+            }
+        }
+        if !root.square: Text {
+            text: root.text;
+            color: root.ink;
+            font-size: root.size == ButtonSize.lg ? Theme.text-sm : Theme.text-xs;
+            font-weight: 500;
+            vertical-alignment: center;
+        }
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+
+    if root.tooltip != "" && touch.has-hover && tip-timer.ready: Rectangle {
+        x: (root.width - self.width) / 2;
+        y: root.height + 6px;
+        z: 100;
+        width: tip-text.preferred-width + 16px;
+        height: 24px;
+        border-radius: 6px;
+        background: #000000e6;
+        tip-text := Text {
+            text: root.tooltip;
+            color: #ffffff;
+            font-size: 11px;
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+    }
+
+    tip-timer := Timer {
+        in-out property <bool> ready;
+        interval: 450ms;
+        running: touch.has-hover && !self.ready && root.tooltip != "";
+        triggered => { self.ready = true; }
+    }
+
+    changed hovered => {
+        if !self.hovered { tip-timer.ready = false; }
+    }
+}
+
+/// Label column used by inspector rows.
+export component FieldLabel inherits Text {
+    width: Theme.label-width;
+    color: Theme.muted;
+    font-size: Theme.text-xs;
+    vertical-alignment: center;
+    overflow: elide;
+}
+
+export component Field inherits HorizontalLayout {
+    in property <string> label;
+    spacing: 12px;
+    min-height: 32px;
+    FieldLabel { text: root.label; }
+    @children
+}
+
+export component Slider inherits Rectangle {
+    in property <float> value;
+    in property <float> minimum: 0;
+    in property <float> maximum: 1;
+    in property <float> step: 0.01;
+    in property <string> label;
+    in property <string> display;
+    /// Marked with a tick; double-click resets to it. Unset when below minimum.
+    in property <float> center: -1000000000;
+    callback started();
+    callback changed(float);
+
+    property <bool> has-center: root.center >= root.minimum;
+    property <float> clamped: max(root.minimum, min(root.maximum, root.value));
+    property <float> fraction: root.maximum > root.minimum ? (root.clamped - root.minimum) / (root.maximum - root.minimum) : 0;
+
+    height: 24px;
+
+    function value-at(x: length) -> float {
+        let fraction = max(0, min(1, (x - 7px) / max(1px, track.width - 14px)));
+        let raw = root.minimum + fraction * (root.maximum - root.minimum);
+        return root.step > 0 ? round(raw / root.step) * root.step : raw;
+    }
+
+    HorizontalLayout {
+        spacing: 12px;
+        if root.label != "": FieldLabel { text: root.label; }
+        track := Rectangle {
+            horizontal-stretch: 1;
+            Rectangle {
+                x: 7px;
+                width: parent.width - 14px;
+                height: 4px;
+                border-radius: 2px;
+                background: Theme.line-strong;
+                Rectangle {
+                    x: 0;
+                    width: parent.width * root.fraction;
+                    height: parent.height;
+                    border-radius: 2px;
+                    background: Theme.accent;
+                }
+            }
+            if root.has-center: Rectangle {
+                x: 7px + (parent.width - 14px) * (root.center - root.minimum) / (root.maximum - root.minimum);
+                width: 1px;
+                height: 8px;
+                background: Theme.line-strong;
+            }
+            Rectangle {
+                x: 7px + (parent.width - 14px) * root.fraction - self.width / 2;
+                width: drag.has-hover || drag.pressed ? 16px : 14px;
+                height: self.width;
+                border-radius: self.width / 2;
+                background: #ffffff;
+                border-width: 2px;
+                border-color: Theme.accent;
+                animate width { duration: 80ms; }
+            }
+            drag := TouchArea {
+                mouse-cursor: default;
+                pointer-event(event) => {
+                    if event.kind == PointerEventKind.down && event.button == PointerEventButton.left {
+                        root.started();
+                        root.changed(root.value-at(self.mouse-x));
+                    }
+                }
+                moved => {
+                    if self.pressed { root.changed(root.value-at(self.mouse-x)); }
+                }
+                double-clicked => {
+                    if root.has-center {
+                        root.started();
+                        root.changed(root.center);
+                    }
+                }
+            }
+        }
+        if root.display != "": Text {
+            width: 48px;
+            text: root.display;
+            color: Theme.fg;
+            font-size: Theme.text-xs;
+            horizontal-alignment: TextHorizontalAlignment.right;
+            vertical-alignment: TextVerticalAlignment.center;
+        }
+    }
+}
+
+export component Switch inherits Rectangle {
+    in property <bool> checked;
+    in property <bool> enabled: true;
+    callback toggled(bool);
+    accessible-role: switch;
+    accessible-checked: root.checked;
+    accessible-enabled: root.enabled;
+    accessible-action-default => { if root.enabled { root.toggled(!root.checked); } }
+    width: 36px;
+    height: 20px;
+    border-radius: 10px;
+    background: root.checked ? Theme.accent : Theme.line-strong;
+    opacity: root.enabled ? 1 : 0.4;
+    animate background { duration: Theme.fast; }
+    Rectangle {
+        x: root.checked ? 18px : 2px;
+        width: 16px;
+        height: 16px;
+        border-radius: 8px;
+        background: #ffffff;
+        animate x { duration: Theme.fast; easing: ease-out; }
+    }
+    TouchArea {
+        enabled: root.enabled;
+        clicked => { root.toggled(!root.checked); }
+    }
+}
+
+export struct Choice {
+    value: string,
+    label: string,
+    hint: string,
+    icon: image,
+}
+
+export component Segmented inherits Rectangle {
+    in property <[Choice]> options;
+    in property <string> current;
+    callback selected(string);
+    height: 32px;
+    border-radius: Theme.radius;
+    border-width: 1px;
+    border-color: Theme.line;
+    background: Theme.app;
+    HorizontalLayout {
+        padding: 2px;
+        for option in root.options: Rectangle {
+            horizontal-stretch: 1;
+            border-radius: 6px;
+            background: option.value == root.current ? Theme.raised : transparent;
+            border-width: option.value == root.current ? 1px : 0px;
+            border-color: #ffffff0d;
+            animate background { duration: Theme.fast; }
+            HorizontalLayout {
+                alignment: center;
+                spacing: 4px;
+                padding-left: 8px;
+                padding-right: 8px;
+                if option.icon.width > 0: VerticalLayout {
+                    alignment: center;
+                    Icon {
+                        source: option.icon;
+                        size: 14px;
+                        colorize: option.value == root.current || seg-touch.has-hover ? Theme.fg : Theme.muted;
+                    }
+                }
+                if option.label != "": Text {
+                    text: option.label;
+                    color: option.value == root.current || seg-touch.has-hover ? Theme.fg : Theme.muted;
+                    font-size: Theme.text-xs;
+                    font-weight: 500;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
+            seg-touch := TouchArea {
+                clicked => { root.selected(option.value); }
+            }
+        }
+    }
+}
+
+/// Section of the inspector: a title row (children go to its right) above content.
+export component SectionHeader inherits HorizontalLayout {
+    in property <string> title;
+    height: 20px;
+    spacing: 8px;
+    Text {
+        text: root.title;
+        color: Theme.fg;
+        font-size: Theme.text-sm;
+        font-weight: 600;
+        vertical-alignment: center;
+        horizontal-stretch: 1;
+    }
+    @children
+}
+
+export component Section inherits Rectangle {
+    in property <bool> last;
+    VerticalLayout {
+        padding: 16px;
+        spacing: 12px;
+        @children
+    }
+    if !root.last: Rectangle {
+        y: root.height - 1px;
+        height: 1px;
+        background: Theme.line;
+    }
+}
+
+export component TextField inherits Rectangle {
+    in-out property <string> text;
+    in property <string> placeholder;
+    in property <image> icon;
+    in property <bool> enabled: true;
+    in property <length> font-size: Theme.text-xs;
+    out property <bool> has-focus: input.has-focus;
+    callback edited(string);
+    callback accepted(string);
+    callback focus-lost(string);
+
+    public function focus-input() { input.focus(); }
+    public function select-all() { input.select-all(); }
+
+    height: 32px;
+    border-radius: Theme.radius;
+    border-width: 1px;
+    border-color: input.has-focus ? Theme.accent : hover-area.has-hover ? Theme.line-strong : Theme.line;
+    background: Theme.raised;
+    opacity: root.enabled ? 1 : 0.5;
+    animate border-color { duration: Theme.fast; }
+
+    hover-area := TouchArea {
+        mouse-cursor: MouseCursor.text;
+        clicked => { input.focus(); }
+    }
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 8px;
+        if root.icon.width > 0: VerticalLayout {
+            alignment: center;
+            Icon { source: root.icon; size: 14px; colorize: Theme.faint; }
+        }
+        Rectangle {
+            horizontal-stretch: 1;
+            clip: true;
+            if root.text == "" && !input.has-focus: Text {
+                x: 0;
+                width: parent.width;
+                height: parent.height;
+                text: root.placeholder;
+                color: Theme.faint;
+                font-size: root.font-size;
+                vertical-alignment: center;
+            }
+            input := TextInput {
+                width: parent.width;
+                height: parent.height;
+                text <=> root.text;
+                enabled: root.enabled;
+                color: Theme.fg;
+                font-size: root.font-size;
+                vertical-alignment: center;
+                single-line: true;
+                selection-background-color: Theme.accent.with-alpha(0.35);
+                selection-foreground-color: Theme.fg;
+                edited => { root.edited(self.text); }
+                accepted => { root.accepted(self.text); }
+                changed has-focus => {
+                    if !self.has-focus { root.focus-lost(self.text); }
+                }
+            }
+        }
+    }
+}
+
+/// Multi-line text box (text content of a text clip).
+export component TextArea inherits Rectangle {
+    in-out property <string> text;
+    callback edited(string);
+    callback focus-lost(string);
+    min-height: 72px;
+    border-radius: Theme.radius;
+    border-width: 1px;
+    border-color: area.has-focus ? Theme.accent : Theme.line;
+    background: Theme.raised;
+    TouchArea {
+        mouse-cursor: MouseCursor.text;
+        clicked => { area.focus(); }
+    }
+    area := TextInput {
+        x: 10px;
+        y: 8px;
+        width: parent.width - 20px;
+        height: parent.height - 16px;
+        text <=> root.text;
+        color: Theme.fg;
+        font-size: Theme.text-xs;
+        wrap: word-wrap;
+        single-line: false;
+        selection-background-color: Theme.accent.with-alpha(0.35);
+        edited => { root.edited(self.text); }
+        changed has-focus => {
+            if !self.has-focus { root.focus-lost(self.text); }
+        }
+    }
+}
+
+/// Numeric input; dragging its label scrubs the value like desktop editors.
+export component NumberField inherits Rectangle {
+    in property <float> value;
+    in property <float> minimum: -1000000000;
+    in property <float> maximum: 1000000000;
+    in property <float> step: 1;
+    in property <int> precision: 0;
+    in property <string> suffix;
+    in property <string> label;
+    /// Value change per dragged pixel; 0 uses `step`.
+    in property <float> scrub: 0;
+    callback started();
+    callback changed(float);
+
+    property <bool> editing: input.has-focus;
+    property <string> shown: root.format(root.value);
+    property <length> scrub-origin;
+    property <float> scrub-start;
+    property <bool> scrubbing;
+
+    function format(v: float) -> string {
+        return root.precision <= 0 ? round(v) : (round(v * pow(10, root.precision)) / pow(10, root.precision));
+    }
+
+    function commit(text: string) {
+        if text.is-float() {
+            let next = max(root.minimum, min(root.maximum, text.to-float()));
+            if abs(next - root.value) > 0.0000001 {
+                root.started();
+                root.changed(next);
+            }
+        }
+        input.text = root.format(root.value);
+    }
+
+    height: 32px;
+    border-radius: Theme.radius;
+    border-width: 1px;
+    border-color: input.has-focus ? Theme.accent : frame-hover.has-hover ? Theme.line-strong : Theme.line;
+    background: Theme.raised;
+
+    frame-hover := TouchArea {
+        mouse-cursor: MouseCursor.text;
+        clicked => { input.focus(); input.select-all(); }
+    }
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 6px;
+        if root.label != "": Text {
+            text: root.label;
+            color: Theme.muted;
+            font-size: Theme.text-2xs;
+            vertical-alignment: center;
+            TouchArea {
+                mouse-cursor: ew-resize;
+                pointer-event(event) => {
+                    if event.kind == PointerEventKind.down {
+                        root.scrub-origin = self.mouse-x;
+                        root.scrub-start = root.value;
+                        root.scrubbing = false;
+                    }
+                }
+                moved => {
+                    if self.pressed {
+                        let delta = (self.mouse-x - root.scrub-origin) / 1px;
+                        if !root.scrubbing && abs(delta) >= 2 {
+                            root.scrubbing = true;
+                            root.started();
+                        }
+                        if root.scrubbing {
+                            let per-pixel = root.scrub > 0 ? root.scrub : root.step;
+                            let raw = root.scrub-start + delta * per-pixel;
+                            root.changed(max(root.minimum, min(root.maximum, round(raw / root.step) * root.step)));
+                        }
+                    }
+                }
+            }
+        }
+        input := TextInput {
+            horizontal-stretch: 1;
+            text: root.shown;
+            color: Theme.fg;
+            font-size: Theme.text-xs;
+            vertical-alignment: center;
+            single-line: true;
+            input-type: decimal;
+            selection-background-color: Theme.accent.with-alpha(0.35);
+            accepted => { root.commit(self.text); self.clear-focus(); }
+            changed has-focus => {
+                if self.has-focus { self.select-all(); } else { root.commit(self.text); }
+            }
+            key-pressed(event) => {
+                if event.text == Key.UpArrow || event.text == Key.DownArrow {
+                    let direction = event.text == Key.UpArrow ? 1 : -1;
+                    let amount = event.modifiers.shift ? root.step * 10 : root.step;
+                    root.started();
+                    root.changed(max(root.minimum, min(root.maximum, root.value + direction * amount)));
+                    return accept;
+                }
+                if event.text == Key.Escape {
+                    self.text = root.format(root.value);
+                    self.clear-focus();
+                    return accept;
+                }
+                reject
+            }
+        }
+        if root.suffix != "": Text {
+            text: root.suffix;
+            color: Theme.faint;
+            font-size: Theme.text-2xs;
+            vertical-alignment: center;
+        }
+    }
+}
+
+export component Select inherits Rectangle {
+    in property <[Choice]> options;
+    /// Narrowest the open list gets (wider for options with hints).
+    in property <length> list-width: 180px;
+    in property <string> current;
+    in property <bool> small;
+    callback selected(string);
+
+    height: root.small ? 28px : 32px;
+    border-radius: Theme.radius;
+    border-width: 1px;
+    border-color: popup-open ? Theme.accent : trigger.has-hover ? Theme.line-strong : Theme.line;
+    background: Theme.raised;
+    property <bool> popup-open;
+
+    trigger := TouchArea {
+        clicked => {
+            root.popup-open = true;
+            popup.show();
+        }
+    }
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 8px;
+        Rectangle {
+            horizontal-stretch: 1;
+            // The label of the current value (repeaters are the only way to search a model).
+            for option in root.options: Text {
+                visible: option.value == root.current;
+                width: parent.width;
+                height: parent.height;
+                text: option.label;
+                color: Theme.fg;
+                font-size: Theme.text-xs;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            Icon { source: Icons.chevron-down; size: 14px; colorize: Theme.muted; }
+        }
+    }
+
+    popup := PopupWindow {
+        x: 0;
+        y: root.height + 4px;
+        width: max(root.width, root.list-width);
+        // An explicit height: otherwise the popup grows to the whole list.
+        height: min(360px, list.preferred-height + 8px);
+        close-policy: close-on-click-outside;
+        Rectangle {
+            border-radius: 12px;
+            border-width: 1px;
+            border-color: Theme.line-strong;
+            background: Theme.raised;
+            drop-shadow-blur: 24px;
+            drop-shadow-color: #00000080;
+            clip: true;
+            // Long lists (languages, blend modes) scroll inside the popup.
+            options-scroll := Flickable {
+                content-height: list.preferred-height;
+                list := VerticalLayout {
+                    padding: 4px;
+                    for option in root.options: Rectangle {
+                        height: 32px;
+                        border-radius: 6px;
+                        accessible-role: list-item;
+                        accessible-label: option.label;
+                        accessible-action-default => {
+                            root.popup-open = false;
+                            root.selected(option.value);
+                            popup.close();
+                        }
+                        background: item-touch.has-hover ? Theme.hover : transparent;
+                        HorizontalLayout {
+                            padding-left: 8px;
+                            padding-right: 12px;
+                            spacing: 6px;
+                            VerticalLayout {
+                                alignment: center;
+                                width: 14px;
+                                if option.value == root.current: Icon { source: Icons.check; size: 14px; colorize: Theme.accent; }
+                            }
+                            // The name always shows in full; a long hint is shortened.
+                            Text {
+                                horizontal-stretch: option.hint == "" ? 1 : 0;
+                                min-width: self.preferred-width;
+                                text: option.label;
+                                color: Theme.fg;
+                                font-size: Theme.text-xs;
+                                vertical-alignment: center;
+                            }
+                            if option.hint != "": Text {
+                                horizontal-stretch: 1;
+                                text: option.hint;
+                                color: Theme.faint;
+                                font-size: Theme.text-2xs;
+                                horizontal-alignment: right;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                        }
+                        item-touch := TouchArea {
+                            clicked => {
+                                root.popup-open = false;
+                                root.selected(option.value);
+                                popup.close();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+export struct MenuEntry {
+    id: string,
+    label: string,
+    shortcut: string,
+    danger: bool,
+    separator: bool,
+    enabled: bool,
+}
+
+/// Floating menu (context menus and "more" buttons). Call `open(x, y)` with
+/// coordinates relative to the component.
+export component Menu inherits Rectangle {
+    in property <[MenuEntry]> entries;
+    in property <length> menu-width: 200px;
+    callback activated(string);
+    property <length> at-x;
+    property <length> at-y;
+
+    public function open(x: length, y: length) {
+        self.at-x = x;
+        self.at-y = y;
+        menu.show();
+    }
+
+    menu := PopupWindow {
+        x: root.at-x;
+        y: root.at-y;
+        width: root.menu-width;
+        close-policy: close-on-click-outside;
+        Rectangle {
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: Theme.line-strong;
+            background: Theme.raised;
+            drop-shadow-blur: 24px;
+            drop-shadow-color: #00000080;
+            VerticalLayout {
+                padding: 4px;
+                for entry in root.entries: VerticalLayout {
+                    if entry.separator: Rectangle { height: 9px; Rectangle { height: 1px; background: Theme.line; } }
+                    if !entry.separator: Rectangle {
+                        height: 30px;
+                        border-radius: 6px;
+                        accessible-role: list-item;
+                        accessible-label: entry.label;
+                        accessible-enabled: entry.enabled;
+                        accessible-action-default => {
+                            if entry.enabled {
+                                root.activated(entry.id);
+                                menu.close();
+                            }
+                        }
+                        background: entry-touch.has-hover && entry.enabled ? Theme.hover : transparent;
+                        opacity: entry.enabled ? 1 : 0.4;
+                        HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 10px;
+                            Text {
+                                horizontal-stretch: 1;
+                                text: entry.label;
+                                color: entry.danger ? Theme.danger : Theme.fg;
+                                font-size: Theme.text-xs;
+                                vertical-alignment: center;
+                            }
+                            if entry.shortcut != "": Text {
+                                text: entry.shortcut;
+                                color: Theme.faint;
+                                font-size: Theme.text-2xs;
+                                vertical-alignment: center;
+                            }
+                        }
+                        entry-touch := TouchArea {
+                            enabled: entry.enabled;
+                            clicked => {
+                                // Report first: closing destroys the popup (and this handler with it).
+                                root.activated(entry.id);
+                                menu.close();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Centred modal card over a dimmed backdrop. Children go below the header.
+export component Dialog inherits Rectangle {
+    in property <string> title;
+    in property <string> description;
+    in property <length> card-width: 560px;
+    in property <bool> dismissible: true;
+    callback dismissed();
+    background: #00000099;
+    TouchArea {
+        clicked => {
+            if root.dismissible { root.dismissed(); }
+        }
+    }
+    FocusScope {
+        key-pressed(event) => {
+            if event.text == Key.Escape && root.dismissible {
+                root.dismissed();
+                return accept;
+            }
+            reject
+        }
+    }
+    Rectangle {
+        width: min(root.card-width, root.width - 48px);
+        height: min(card.preferred-height, root.height * 0.9);
+        border-radius: 12px;
+        border-width: 1px;
+        border-color: Theme.line;
+        background: Theme.panel;
+        drop-shadow-blur: 40px;
+        drop-shadow-color: #00000099;
+        clip: true;
+        TouchArea { }
+        card := VerticalLayout {
+            Rectangle {
+                min-height: header.preferred-height;
+                header := HorizontalLayout {
+                    padding-left: 20px;
+                    padding-right: 20px;
+                    padding-top: 16px;
+                    padding-bottom: 16px;
+                    spacing: 12px;
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        spacing: 4px;
+                        Text {
+                            text: root.title;
+                            color: Theme.fg;
+                            font-size: Theme.text-sm;
+                            font-weight: 600;
+                        }
+                        if root.description != "": Text {
+                            text: root.description;
+                            color: Theme.muted;
+                            font-size: Theme.text-xs;
+                            wrap: word-wrap;
+                        }
+                    }
+                    if root.dismissible: VerticalLayout {
+                        alignment: start;
+                        Button {
+                            icon: Icons.x;
+                            kind: ButtonKind.ghost;
+                            size: ButtonSize.sm;
+                            clicked => { root.dismissed(); }
+                        }
+                    }
+                }
+                Rectangle {
+                    y: parent.height - 1px;
+                    height: 1px;
+                    background: Theme.line;
+                }
+            }
+            @children
+        }
+    }
+}
+
+/// Button row at the bottom of a dialog.
+export component DialogFooter inherits Rectangle {
+    Rectangle {
+        y: 0;
+        height: 1px;
+        background: Theme.line;
+    }
+    HorizontalLayout {
+        padding-left: 20px;
+        padding-right: 20px;
+        padding-top: 12px;
+        padding-bottom: 12px;
+        spacing: 8px;
+        alignment: end;
+        @children
+    }
+}
+
+export enum ToastTone { info, success, error }
+
+export struct Toast {
+    id: int,
+    title: string,
+    detail: string,
+    tone: ToastTone,
+    action: string,
+}
+
+export component Toaster inherits VerticalLayout {
+    in property <[Toast]> toasts;
+    callback dismiss(int);
+    callback action(int);
+    width: 340px;
+    spacing: 8px;
+    alignment: end;
+    for toast in root.toasts: Rectangle {
+        border-radius: Theme.radius;
+        border-width: 1px;
+        border-color: Theme.line;
+        background: Theme.raised;
+        drop-shadow-blur: 24px;
+        drop-shadow-color: #00000080;
+        HorizontalLayout {
+            padding-left: 12px;
+            padding-right: 12px;
+            padding-top: 10px;
+            padding-bottom: 10px;
+            spacing: 12px;
+            VerticalLayout {
+                alignment: start;
+                padding-top: 2px;
+                Icon {
+                    size: 16px;
+                    source: toast.tone == ToastTone.success ? Icons.circle-check : toast.tone == ToastTone.error ? Icons.circle-alert : Icons.info;
+                    colorize: toast.tone == ToastTone.success ? Theme.ok : toast.tone == ToastTone.error ? Theme.danger : Theme.accent;
+                }
+            }
+            VerticalLayout {
+                horizontal-stretch: 1;
+                spacing: 2px;
+                Text {
+                    text: toast.title;
+                    color: Theme.fg;
+                    font-size: Theme.text-xs;
+                    font-weight: 500;
+                    wrap: word-wrap;
+                }
+                if toast.detail != "": Text {
+                    text: toast.detail;
+                    color: Theme.muted;
+                    font-size: Theme.text-2xs;
+                    wrap: word-wrap;
+                }
+                if toast.action != "": Text {
+                    text: toast.action;
+                    color: Theme.accent;
+                    font-size: Theme.text-2xs;
+                    font-weight: 600;
+                    TouchArea { clicked => { root.action(toast.id); } }
+                }
+            }
+            VerticalLayout {
+                alignment: start;
+                Button {
+                    icon: Icons.x;
+                    kind: ButtonKind.ghost;
+                    size: ButtonSize.sm;
+                    clicked => { root.dismiss(toast.id); }
+                }
+            }
+        }
+    }
+}
+
+/// Thin vertical divider for toolbars.
+export component Divider inherits Rectangle {
+    width: 1px;
+    height: 20px;
+    background: Theme.line;
+}
+
+/// Floating, rounded editor panel.
+export component Surface inherits Rectangle {
+    border-radius: Theme.radius-panel;
+    border-width: 1px;
+    border-color: Theme.surface-border;
+    background: Theme.panel;
+    clip: true;
+}
+
+export component Spinner inherits Rectangle {
+    in property <length> size: 16px;
+    in property <brush> colorize: Theme.accent;
+    width: root.size;
+    height: root.size;
+    Icon {
+        size: root.size;
+        source: Icons.loader;
+        colorize: root.colorize;
+        transform-rotation: animation-tick() * 360deg / 900ms;
+    }
+}

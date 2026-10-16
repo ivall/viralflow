@@ -1,0 +1,120 @@
+import { Theme, Icons } from "../theme.slint";
+import { Surface, Spinner, Button, ButtonKind } from "../widgets.slint";
+import { EditorState, DragState } from "state.slint";
+import { Player } from "player.slint";
+import { Timeline, TimelineState } from "timeline.slint";
+import { Inspector, InspectorState } from "inspector.slint";
+import { AssetPanel, AssetsState, CaptionsState } from "assets.slint";
+import { ExportDialog, ExportState, ExportPhase } from "export.slint";
+import { ShortcutsDialog } from "shortcuts.slint";
+
+export { EditorState, TimelineState, InspectorState, AssetsState, DragState, ExportState, ExportPhase, CaptionsState }
+
+export component EditorView inherits Rectangle {
+    background: Theme.app;
+    in-out property <length> timeline-height: 300px;
+
+    forward-focus: keys;
+    init => { keys.focus(); }
+    // Shortcuts work again as soon as a dialog closes.
+    property <bool> dialog-open: ExportState.open || EditorState.shortcuts-open;
+    changed dialog-open => { if !self.dialog-open { keys.focus(); } }
+    property <int> focus-request: EditorState.focus-request;
+    changed focus-request => { keys.focus(); }
+    property <string> panel: EditorState.panel;
+    changed panel => { EditorState.panel-changed(self.panel); }
+    keys := FocusScope {
+        key-pressed(event) => {
+            if EditorState.key(event.text, event.modifiers.control || event.modifiers.meta, event.modifiers.shift, event.modifiers.alt) {
+                return accept;
+            }
+            reject
+        }
+
+        if EditorState.loading: Rectangle {
+            Spinner { size: 20px; }
+        }
+
+        if !EditorState.loading && EditorState.load-error != "": VerticalLayout {
+            alignment: center;
+            spacing: 6px;
+            Text { text: "This project could not be opened"; color: Theme.fg; font-size: Theme.text-sm; font-weight: 500; horizontal-alignment: center; }
+            Text { text: EditorState.load-error; color: Theme.muted; font-size: Theme.text-xs; horizontal-alignment: center; }
+            HorizontalLayout {
+                alignment: center;
+                padding-top: 10px;
+                Button { text: "Back to projects"; kind: ButtonKind.outline; clicked => { EditorState.back(); } }
+            }
+        }
+
+        // Full screen shows only the video and its controls (like the old
+        // player's own full screen), never the panels around it.
+        if !EditorState.loading && EditorState.load-error == "" && EditorState.fullscreen: Player {
+            fullscreen: true;
+        }
+
+        if !EditorState.loading && EditorState.load-error == "" && !EditorState.fullscreen: VerticalLayout {
+            padding-left: 8px;
+            padding-right: 8px;
+            padding-top: 2px;
+            padding-bottom: 8px;
+            spacing: 8px;
+            HorizontalLayout {
+                vertical-stretch: 1;
+                spacing: 8px;
+                AssetPanel {
+                    width: 400px;
+                }
+                Player {
+                    horizontal-stretch: 1;
+                }
+                Inspector {
+                    width: 336px;
+                }
+            }
+            // Drag the gap above the timeline to resize it.
+            Rectangle {
+                height: 0px;
+                TouchArea {
+                    y: -6px;
+                    height: 10px;
+                    mouse-cursor: ns-resize;
+                    moved => {
+                        if self.pressed {
+                            root.timeline-height = max(180px, min(root.height - 320px, root.timeline-height - (self.mouse-y - self.pressed-y)));
+                        }
+                    }
+                }
+            }
+            Timeline {
+                height: root.timeline-height;
+            }
+        }
+    }
+
+    // What is being dragged from the panels follows the pointer.
+    if DragState.active: Rectangle {
+        x: DragState.x - root.absolute-position.x + 12px;
+        y: DragState.y - root.absolute-position.y + 12px;
+        width: min(220px, ghost-label.preferred-width + 20px);
+        height: 28px;
+        border-radius: 6px;
+        border-width: 1px;
+        border-color: DragState.accepted ? Theme.accent : Theme.line-strong;
+        background: Theme.raised;
+        drop-shadow-blur: 12px;
+        drop-shadow-color: #00000080;
+        ghost-label := Text {
+            x: 10px;
+            width: parent.width - 20px;
+            text: DragState.label;
+            color: Theme.fg;
+            font-size: Theme.text-xs;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+
+    if ExportState.open: ExportDialog { }
+    if EditorState.shortcuts-open: ShortcutsDialog { dismissed => { EditorState.shortcuts-open = false; } }
+}

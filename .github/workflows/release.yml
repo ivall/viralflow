@@ -1,6 +1,7 @@
-# Builds installers for Windows and Linux and attaches them to a draft GitHub release.
-# Runs only when a version tag is pushed (git tag v1.2.0 && git push origin v1.2.0)
-# or when started by hand from the Actions tab.
+# Builds the installers for Windows (setup .exe and portable .zip), Linux
+# (AppImage and .tar.gz, x64 and arm64) and macOS (.dmg and .zip, Apple
+# silicon and Intel), then attaches them to a draft GitHub release. Runs when a
+# version tag is pushed (git tag v1.0.0 && git push origin v1.0.0) or by hand.
 name: Release
 
 on:
@@ -15,45 +16,153 @@ concurrency:
 permissions:
   contents: write
 
+env:
+  CARGO_TERM_COLOR: always
+  FFMPEG_WINDOWS: https://github.com/GyanD/codexffmpeg/releases/download/8.1.2/ffmpeg-8.1.2-full_build-shared.7z
+
 jobs:
-  build:
-    name: Build (${{ matrix.platform }})
-    runs-on: ${{ matrix.platform }}
-    strategy:
-      fail-fast: false
-      matrix:
-        platform: [windows-latest, ubuntu-22.04]
+  windows:
+    name: Windows
+    runs-on: windows-latest
+    env:
+      LIBCLANG_PATH: C:\Program Files\LLVM\bin
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install Linux dependencies
-        if: runner.os == 'Linux'
+      - name: FFmpeg
+        shell: pwsh
+        run: |
+          Invoke-WebRequest $env:FFMPEG_WINDOWS -OutFile ffmpeg.7z
+          7z x ffmpeg.7z -offmpeg-download | Out-Null
+          $dir = (Get-ChildItem ffmpeg-download -Directory | Select-Object -First 1).FullName
+          "FFMPEG_DIR=$dir" | Out-File -Append $env:GITHUB_ENV
+
+      - name: Inno Setup
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build and package
+        shell: pwsh
+        run: ./scripts/package.ps1
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows
+          path: |
+            dist/*.zip
+            dist/*.exe
+          if-no-files-found: error
+
+  linux:
+    name: Linux ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The oldest supported Ubuntu: the app then runs on newer systems too (glibc).
+          - { arch: x64, runner: ubuntu-22.04 }
+          - { arch: arm64, runner: ubuntu-22.04-arm }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: System packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev libdbus-1-dev patchelf rpm
+          sudo apt-get install -y clang libclang-dev pkg-config libxkbcommon-dev libfontconfig1-dev libasound2-dev libdbus-1-dev libwayland-dev file
 
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: npm
+      - name: FFmpeg
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash scripts/ci/ffmpeg-linux.sh
 
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri
+          key: ${{ matrix.arch }}
 
-      - run: npm ci
+      - name: Build and package
+        run: bash scripts/package-linux.sh
 
-      - uses: tauri-apps/tauri-action@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/upload-artifact@v7
         with:
-          tagName: v__VERSION__
-          releaseName: ViralFlow v__VERSION__
-          releaseBody: |
-            Install the `.exe` (Windows) or the `.AppImage` / `.deb` / `.rpm` (Linux).
-            ViralFlow needs FFmpeg - see the README for setup.
-          releaseDraft: true
-          prerelease: false
-          generateReleaseNotes: true
+          name: linux-${{ matrix.arch }}
+          path: |
+            dist/*.AppImage
+            dist/*.tar.gz
+          if-no-files-found: error
+
+  macos:
+    name: macOS ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: arm64, runner: macos-15 }
+          - { arch: x64, runner: macos-15-intel }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: FFmpeg and tools
+        run: brew install ffmpeg@8 dylibbundler pkg-config
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.arch }}
+
+      - name: Build and package
+        run: bash scripts/package-macos.sh
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos-${{ matrix.arch }}
+          path: |
+            dist/*.dmg
+            dist/*.zip
+          if-no-files-found: error
+
+  publish:
+    name: Draft release
+    needs: [windows, linux, macos]
+    # Whatever was built is published, even if one platform failed.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Upload to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          shopt -s nullglob
+          files=(dist/*)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "nothing was built" >&2
+            exit 1
+          fi
+          (cd dist && sha256sum * > SHA256SUMS.txt)
+          files=(dist/*)
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            tag="v$(grep -m1 '^version = ' Cargo.toml | sed -E 's/version = "(.*)"/\1/')"
+          fi
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "${files[@]}" --clobber
+          else
+            gh release create "$tag" "${files[@]}" --draft --generate-notes --title "ViralFlow $tag" --notes-file .github/release-notes.md
+          fi

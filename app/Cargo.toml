@@ -1,0 +1,46 @@
+[package]
+name = "viralflow"
+description = "ViralFlow - local video editor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "viralflow"
+path = "src/main.rs"
+
+[dependencies]
+vf-core.workspace = true
+vf-render.workspace = true
+vf-media.workspace = true
+vf-audio.workspace = true
+vf-ai.workspace = true
+wgpu = "30"
+jpeg-encoder = "0.6"
+serde.workspace = true
+serde_json.workspace = true
+log.workspace = true
+chrono.workspace = true
+slint = { version = "1.18", default-features = false, features = ["std", "backend-winit", "renderer-skia", "accessibility", "compat-1-2", "unstable-wgpu-30", "unstable-winit-030"] }
+dirs = "6"
+rfd = "0.15"
+png = "0.18"
+env_logger = "0.11"
+
+[target.'cfg(windows)'.dependencies]
+keyring = { version = "3.6", features = ["windows-native"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3.6", features = ["apple-native"] }
+
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+keyring = { version = "3.6", features = ["sync-secret-service", "crypto-rust"] }
+
+[dev-dependencies]
+# Headless UI tests: the Slint UI runs in memory with simulated input.
+i-slint-backend-testing = "=1.18.1"
+
+[build-dependencies]
+slint-build = "1.18"
+winresource = "0.1"

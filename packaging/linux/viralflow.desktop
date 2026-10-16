@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=ViralFlow
+GenericName=Video Editor
+Comment=Edit short vertical videos with captions, effects and music
+Exec=viralflow %F
+Icon=viralflow
+Terminal=false
+Categories=AudioVideo;Video;AudioVideoEditing;
+Keywords=video;editor;captions;tiktok;reels;shorts;
+MimeType=video/mp4;video/quicktime;video/webm;
+StartupWMClass=viralflow

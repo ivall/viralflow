@@ -1,0 +1,5 @@
+#!/bin/sh
+# AppImage entry point: the bundled FFmpeg libraries come first.
+here="$(dirname "$(readlink -f "$0")")"
+export LD_LIBRARY_PATH="$here/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+exec "$here/usr/bin/viralflow" "$@"
