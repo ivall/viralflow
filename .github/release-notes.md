@@ -11,6 +11,6 @@ FFmpeg is included in every download.
 
 **macOS:** the app is not notarized yet. The first time, right-click ViralFlow in Applications and choose *Open* (or run `xattr -dr com.apple.quarantine /Applications/ViralFlow.app`).
 
-**Linux:** make the AppImage executable (`chmod +x ViralFlow-*.AppImage`) and run it. Local Whisper captions need an FFmpeg built with whisper; the bundled Linux and macOS FFmpeg builds do not include it, so use cloud captions (OpenRouter) there.
+**Linux:** make the AppImage executable (`chmod +x ViralFlow-*.AppImage`) and run it.
 
 Checksums are in `SHA256SUMS.txt`.

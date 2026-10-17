@@ -35,13 +35,13 @@ fn offset_rgb(v: f64) -> ColorMatrix {
     [1.0, 0.0, 0.0, 0.0, v, 0.0, 1.0, 0.0, 0.0, v, 0.0, 0.0, 1.0, 0.0, v, 0.0, 0.0, 0.0, 1.0, 0.0]
 }
 
-fn contrast_matrix(k: f64) -> ColorMatrix {
+pub fn contrast_matrix(k: f64) -> ColorMatrix {
     let o = 0.5 * (1.0 - k);
     [k, 0.0, 0.0, 0.0, o, 0.0, k, 0.0, 0.0, o, 0.0, 0.0, k, 0.0, o, 0.0, 0.0, 0.0, 1.0, 0.0]
 }
 
 /// CSS saturate() matrix.
-fn saturate_matrix(s: f64) -> ColorMatrix {
+pub fn saturate_matrix(s: f64) -> ColorMatrix {
     [
         0.213 + 0.787 * s,
         0.715 - 0.715 * s,
@@ -67,7 +67,7 @@ fn saturate_matrix(s: f64) -> ColorMatrix {
 }
 
 /// CSS hue-rotate() matrix.
-fn hue_matrix(degrees: f64) -> ColorMatrix {
+pub fn hue_matrix(degrees: f64) -> ColorMatrix {
     let (s, c) = degrees.to_radians().sin_cos();
     [
         0.213 + c * 0.787 - s * 0.213,
@@ -98,6 +98,41 @@ pub fn mix_matrix(color: [f64; 3], amount: f64) -> ColorMatrix {
     let a = clamp(amount, 0.0, 1.0);
     let k = 1.0 - a;
     [k, 0.0, 0.0, 0.0, color[0] * a, 0.0, k, 0.0, 0.0, color[1] * a, 0.0, 0.0, k, 0.0, color[2] * a, 0.0, 0.0, 0.0, 1.0, 0.0]
+}
+
+/// CSS sepia() matrix, mixed in by `amount` 0..1.
+pub fn sepia_matrix(amount: f64) -> ColorMatrix {
+    let a = clamp(amount, 0.0, 1.0);
+    let k = 1.0 - a;
+    [
+        k + 0.393 * a,
+        0.769 * a,
+        0.189 * a,
+        0.0,
+        0.0,
+        0.349 * a,
+        k + 0.686 * a,
+        0.168 * a,
+        0.0,
+        0.0,
+        0.272 * a,
+        0.534 * a,
+        k + 0.131 * a,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+    ]
+}
+
+/// CSS invert() matrix: `amount` 1 is the negative.
+pub fn invert_matrix(amount: f64) -> ColorMatrix {
+    let a = clamp(amount, 0.0, 1.0);
+    let k = 1.0 - 2.0 * a;
+    [k, 0.0, 0.0, 0.0, a, 0.0, k, 0.0, 0.0, a, 0.0, 0.0, k, 0.0, a, 0.0, 0.0, 0.0, 1.0, 0.0]
 }
 
 pub fn brightness_matrix(offset: f64) -> ColorMatrix {

@@ -3,6 +3,7 @@
 pub mod animation;
 pub mod color;
 pub mod effects;
+pub mod fx;
 pub mod keyframes;
 pub mod math;
 pub mod scene;

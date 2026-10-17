@@ -13,6 +13,10 @@ struct Layer {
     glitch_a: vec4<f32>,   // band offsets 0..3 (fraction of box width)
     glitch_b: vec4<f32>,   // band offsets 4..5, has_matrix, source_h_px
     matrix: array<vec4<f32>, 5>,
+    fx_a: vec4<f32>,       // chroma (share of box width), pixel block (box px), posterize levels, sharpen
+    fx_b: vec4<f32>,       // bulge, mirror (0/1), zoom blur, light leak
+    fx_c: vec4<f32>,       // leak position, clip top, clip bottom, iris (share of half diagonal, >= 1 off)
+    fx_d: vec4<f32>,       // clock (share of a turn, >= 1 off), unused x3
 };
 
 @group(0) @binding(0) var<uniform> layer: Layer;
@@ -81,6 +85,111 @@ fn apply_matrix(c: vec4<f32>) -> vec4<f32> {
     return vec4<f32>(out.rgb * out.a, out.a);
 }
 
+// Where in the box a pixel samples once the lens, the mirror and the pixel
+// blocks have moved it.
+fn distort(uv_in: vec2<f32>) -> vec2<f32> {
+    var uv = uv_in;
+    if (layer.fx_b.y > 0.5 && uv.x > 0.5) {
+        uv.x = 1.0 - uv.x;
+    }
+    let bulge = layer.fx_b.x;
+    if (abs(bulge) > 0.001) {
+        // Square space, so the lens is round whatever the box's shape.
+        let size = layer.box_info.xy;
+        let unit = size / max(size.x, size.y);
+        let d = (uv - vec2<f32>(0.5)) * unit;
+        let r2 = clamp(dot(d, d) * 2.0, 0.0, 1.0);
+        let k = max(1.0 - bulge * (1.0 - r2), 0.1);
+        uv = vec2<f32>(0.5) + (uv - vec2<f32>(0.5)) * k;
+    }
+    let block = layer.fx_a.y;
+    if (block > 1.0) {
+        let cells = max(layer.box_info.xy / block, vec2<f32>(1.0));
+        uv = (floor(uv * cells) + vec2<f32>(0.5)) / cells;
+    }
+    return uv;
+}
+
+fn source_at(uv: vec2<f32>) -> vec4<f32> {
+    let src = layer.src_rect.xy + clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)) * layer.src_rect.zw;
+    return textureSampleLevel(source_tex, linear_sampler, src, 0.0);
+}
+
+// The source pixel at box uv, with the colour fringes and sharpening.
+fn fetch(uv: vec2<f32>) -> vec4<f32> {
+    var c = source_at(uv);
+    let shift = layer.fx_a.x;
+    if (shift > 0.0) {
+        let r = source_at(uv + vec2<f32>(shift, 0.0));
+        let b = source_at(uv - vec2<f32>(shift, 0.0));
+        c = vec4<f32>(r.r, c.g, b.b, max(c.a, max(r.a, b.a)));
+    }
+    let sharpen = layer.fx_a.w;
+    if (sharpen > 0.0) {
+        let px = vec2<f32>(1.0) / max(layer.box_info.xy, vec2<f32>(1.0));
+        let around = source_at(uv + vec2<f32>(px.x, 0.0)) + source_at(uv - vec2<f32>(px.x, 0.0))
+            + source_at(uv + vec2<f32>(0.0, px.y)) + source_at(uv - vec2<f32>(0.0, px.y));
+        c = vec4<f32>(clamp(c.rgb + (c.rgb * 4.0 - around.rgb) * sharpen * 0.5, vec3<f32>(0.0), vec3<f32>(c.a)), c.a);
+    }
+    return c;
+}
+
+// The picture at box uv: one fetch, or twelve along the way to the centre for a zoom blur.
+fn picture(uv: vec2<f32>) -> vec4<f32> {
+    let zoom = layer.fx_b.z;
+    if (zoom <= 0.001) {
+        return fetch(distort(uv));
+    }
+    var sum = vec4<f32>(0.0);
+    for (var i = 0; i < 12; i = i + 1) {
+        let k = 1.0 - zoom * 0.3 * f32(i) / 11.0;
+        sum += fetch(distort(vec2<f32>(0.5) + (uv - vec2<f32>(0.5)) * k));
+    }
+    return sum / 12.0;
+}
+
+fn posterize(c: vec4<f32>) -> vec4<f32> {
+    let levels = layer.fx_a.z;
+    if (levels < 2.0 || c.a <= 0.0) {
+        return c;
+    }
+    let steps = levels - 1.0;
+    let straight = floor(c.rgb / c.a * steps + vec3<f32>(0.5)) / steps;
+    return vec4<f32>(straight * c.a, c.a);
+}
+
+// A warm glow drifting across the box: the light adds orange and burns the
+// blue out of what it falls on, as light leaking into a film camera does.
+fn light_leak(c: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
+    let strength = layer.fx_b.w;
+    if (strength <= 0.001 || c.a <= 0.0) {
+        return c;
+    }
+    let centre = vec2<f32>(mix(-0.2, 1.2, layer.fx_c.x), 0.3);
+    let d = (uv - centre) * vec2<f32>(1.0, 1.4);
+    let glow = clamp(strength * exp(-dot(d, d) * 3.0), 0.0, 1.0);
+    let warmed = c.rgb / c.a * (vec3<f32>(1.0) - glow * vec3<f32>(0.0, 0.15, 0.75));
+    let lit = clamp(warmed + vec3<f32>(1.0, 0.55, 0.1) * glow, vec3<f32>(0.0), vec3<f32>(1.0));
+    return vec4<f32>(lit * c.a, c.a);
+}
+
+// Coverage of the masks transitions draw with: the vertical wipes, the iris
+// and the clock hand.
+fn mask_coverage(uv: vec2<f32>, size: vec2<f32>, aa: f32) -> f32 {
+    var cov = clamp((uv.y - layer.fx_c.y) * size.y / aa + 0.5, 0.0, 1.0) * clamp((1.0 - layer.fx_c.z - uv.y) * size.y / aa + 0.5, 0.0, 1.0);
+    let p = uv * size - size * 0.5;
+    let iris = layer.fx_c.w;
+    if (iris < 1.0) {
+        cov *= clamp((iris * length(size) * 0.5 - length(p)) / aa + 0.5, 0.0, 1.0);
+    }
+    let clock = layer.fx_d.x;
+    if (clock < 1.0) {
+        let turn = fract(atan2(p.x, -p.y) / 6.2831853 + 1.0);
+        cov *= clamp((clock - turn) * 6.2831853 * length(p) / aa + 0.5, 0.0, 1.0) * step(0.0001, clock);
+    }
+    return cov;
+}
+
 @fragment
 fn fs_layer(input: VsOut) -> @location(0) vec4<f32> {
     let size = layer.box_info.xy;
@@ -93,7 +202,7 @@ fn fs_layer(input: VsOut) -> @location(0) vec4<f32> {
 
     // Wipes and the typewriter reveal clip the box horizontally.
     let clip_cov = clamp((uv.x - layer.clip.x) * size.x / aa + 0.5, 0.0, 1.0) * clamp((layer.clip.y - uv.x) * size.x / aa + 0.5, 0.0, 1.0);
-    var coverage = clip_cov;
+    var coverage = clip_cov * mask_coverage(uv, size, aa);
 
     // Glitch: six horizontal bands, each shifted sideways inside the box.
     if (layer.clip.w > 0.5) {
@@ -108,8 +217,10 @@ fn fs_layer(input: VsOut) -> @location(0) vec4<f32> {
         coverage *= box_coverage(input.uv * size, size, layer.box_info.z, aa);
         let inside = step(0.0, uv.x) * step(uv.x, 1.0);
         let src = layer.src_rect.xy + clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)) * layer.src_rect.zw;
-        color = textureSample(source_tex, linear_sampler, src) * inside;
+        color = picture(uv) * inside;
         color = apply_matrix(color);
+        color = posterize(color);
+        color = light_leak(color, input.uv);
         // Vignette and grain work in source space, as on the CPU.
         if (layer.params.y > 0.001) {
             let d = (src - vec2<f32>(0.5)) * 2.0;

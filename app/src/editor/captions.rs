@@ -37,7 +37,7 @@ fn default_rate(model: &str) -> f64 {
 }
 
 /// Whisper reports once per this many seconds of audio.
-const WHISPER_CHUNK: f64 = 20.0;
+const WHISPER_CHUNK: f64 = 30.0;
 
 struct Outcome {
     cues: Vec<CaptionCue>,
@@ -172,8 +172,7 @@ impl EditorController {
         let model_id = settings.whisper_model.clone();
         let cloud = settings.transcription_provider == "openrouter";
         state.set_cloud(cloud);
-        state.set_available(cloud || whisper::available());
-        let installed = if cloud { self.context.keys.status().has_key } else { whisper::model_path(&self.context.paths.models, &model_id).is_file() };
+        let installed = if cloud { self.context.keys.status().has_key } else { whisper::is_installed(&self.context.paths.models, &model_id) };
         state.set_model_installed(installed);
         if let Some(model) = whisper::model(&model_id) {
             let name = model.label.split(" - ").next().unwrap_or(model.label);
@@ -222,7 +221,6 @@ impl EditorController {
         let speed = item.speed();
         let audio = item.duration * speed;
         let model = whisper::model_path(&self.context.paths.models, &settings.whisper_model);
-        let work = self.context.paths.jobs.join(uid("captions"));
         let cloud = settings.transcription_provider == "openrouter";
         let key = if cloud { self.context.keys.key() } else { String::new() };
         let cloud_model = settings.openrouter_transcription_model.clone();
@@ -233,9 +231,9 @@ impl EditorController {
         std::thread::Builder::new()
             .name("captions".into())
             .spawn(move || {
-                let request = whisper::Request { model: &model, source: &path, offset, duration: audio, language: &language, work_dir: &work };
-                let progress = |pass: u8, fraction: f64| {
-                    let _ = sender.send(Message::Progress((pass as f64 + fraction) / 2.0));
+                let request = whisper::Request { model: &model, source: &path, offset, duration: audio, language: &language };
+                let progress = |fraction: f64| {
+                    let _ = sender.send(Message::Progress(fraction));
                 };
                 let transcribed = if cloud {
                     // One request; the bar only creeps until the answer is in.
@@ -250,7 +248,6 @@ impl EditorController {
                     let transcript = build_transcript(segments, timed, audio, Grouping { max_words: words });
                     Outcome { cues: transcript.cues, words: transcript.words, alignment: transcript.alignment }
                 });
-                let _ = std::fs::remove_dir_all(&work);
                 let message = match result {
                     Ok(outcome) => Message::Transcribed(Ok(outcome)),
                     Err(_) if flag.load(Ordering::Acquire) => Message::Transcribed(Err(String::new())),
@@ -263,7 +260,7 @@ impl EditorController {
         let pace = if cloud {
             Pace::new(2.0 + audio * default_rate("openrouter"), 0.95, now)
         } else {
-            Pace::new(2.0 + audio * default_rate(&settings.whisper_model), (WHISPER_CHUNK / audio.max(1.0)).min(1.0) / 2.0, now)
+            Pace::new(2.0 + audio * default_rate(&settings.whisper_model), (WHISPER_CHUNK / audio.max(1.0)).min(1.0), now)
         };
         self.captions.borrow_mut().job = Some(Job { cancel, messages, pace: Some(pace), target: Some((item.id.clone(), item.start, speed)) });
         self.start_captions_timer();

@@ -284,7 +284,7 @@ fn every_editor_button_reaches_rust() {
     expect("Add text", "add text ");
     editor.set_panel("effects".into());
     assets.set_effect_targets(1);
-    assets.set_current_effect("punch".into());
+    assets.set_effects_on(1);
     expect("Remove effect", "panel remove-effect");
     editor.set_panel("transitions".into());
     assets.set_has_seam(true);
@@ -297,7 +297,6 @@ fn every_editor_button_reaches_rust() {
 fn every_panel_item_can_be_dragged() {
     let window = editor_window();
     let assets = window.global::<crate::AssetsState>();
-    let choice = |value: &str| crate::Choice { value: value.into(), label: value.into(), ..Default::default() };
     assets.set_text_presets(slint::ModelRc::new(slint::VecModel::from(vec![crate::PresetCard {
         id: "gold".into(),
         label: "Gold".into(),
@@ -312,8 +311,9 @@ fn every_panel_item_can_be_dragged() {
         title: "Reactions".into(),
         emoji: slint::ModelRc::new(slint::VecModel::from(vec![slint::SharedString::from("🔥")])),
     }])));
-    assets.set_effects(slint::ModelRc::new(slint::VecModel::from(vec![choice("vhs")])));
-    assets.set_transitions(slint::ModelRc::new(slint::VecModel::from(vec![choice("fade")])));
+    let card = |value: &str| crate::EffectCard { value: value.into(), label: value.into(), ..Default::default() };
+    assets.set_effects(slint::ModelRc::new(slint::VecModel::from(vec![card("vhs")])));
+    assets.set_transitions(slint::ModelRc::new(slint::VecModel::from(vec![card("fade")])));
     let log: Log = Rc::default();
     let l = log.clone();
     assets.on_press(move |kind, id, _, _| l.borrow_mut().push(format!("{kind} {id}")));
@@ -321,8 +321,8 @@ fn every_panel_item_can_be_dragged() {
         ("text", "TextPanel::card-touch", "text gold"),
         ("stickers", "StickersPanel::shape-touch", "shape circle"),
         ("stickers", "StickersPanel::emoji-touch", "sticker 🔥"),
-        ("effects", "EffectsPanel::effect-touch", "effect vhs"),
-        ("transitions", "TransitionsPanel::preset-touch", "transition fade"),
+        ("effects", "CardGrid::touch", "effect vhs"),
+        ("transitions", "CardGrid::touch", "transition fade"),
     ] {
         window.global::<EditorState>().set_panel(panel.into());
         log.borrow_mut().clear();

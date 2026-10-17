@@ -6,17 +6,18 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use slint::{ComponentHandle, Image, Model, ModelRc, Rgba8Pixel, SharedPixelBuffer, SharedString, VecModel};
-use vf_core::edit::{Editor, Placement};
-use vf_core::engine::effects::EFFECTS;
+use vf_core::edit::{can_have_effects, Editor, Placement, MAX_EFFECTS};
+use vf_core::engine::effects::{effect_label, EFFECTS};
 use vf_core::engine::transitions::{track_seams, TRANSITIONS};
 use vf_core::model::*;
 use vf_core::presets::{media_item, shape_item, sticker_item, text_item, text_preset, PresetCategory, SHAPE_PRESETS, STICKER_GROUPS, TEXT_PRESETS};
 use vf_render::TextEngine;
 
+use super::cards::Card;
 use super::inspector::parse_hex;
 use super::timeline::{DropKind, DropTarget};
 use super::EditorController;
-use crate::{format, media, AssetTile, AssetsState, Choice, DragState, EditorState, PresetCard, ShapeCard, StickerGroup};
+use crate::{format, media, AssetTile, AssetsState, Choice, DragState, EditorState, EffectCard, PresetCard, ShapeCard, StickerGroup};
 
 /// A press turns into a drag after this many pixels.
 const DRAG_THRESHOLD: f64 = 5.0;
@@ -88,6 +89,7 @@ impl EditorController {
         on!(state, on_filter_changed, |this| this.sync_ui());
         on!(state, on_asset_menu, |this, action, id| this.asset_menu(&action, &id));
         on!(state, on_action, |this, action| this.panel_action(&action));
+        on!(state, on_card_hover, |this, kind, value| this.card_hover(&kind, &value));
         on!(drag, on_over, |this, target, x, y| this.drag_over(&target, x as f64, y as f64));
         on!(drag, on_leave, |this, target| this.drag_leave(&target));
 
@@ -107,10 +109,69 @@ impl EditorController {
             })
             .collect();
         state.set_stickers(ModelRc::new(VecModel::from(stickers)));
-        let effects: Vec<Choice> = EFFECTS.iter().filter(|e| e.kind != EffectKind::None).map(|e| choice(e.kind.as_str(), e.label)).collect();
+        let card = |value: &str, label: &str, hint: &str| EffectCard { value: value.into(), label: label.into(), hint: hint.into(), ..Default::default() };
+        let effects: Vec<EffectCard> = EFFECTS.iter().map(|e| card(e.kind.as_str(), e.label, e.description)).collect();
         state.set_effects(ModelRc::new(VecModel::from(effects)));
-        let transitions: Vec<Choice> = TRANSITIONS.iter().map(|t| choice(t.kind.as_str(), t.label)).collect();
+        let transitions: Vec<EffectCard> = TRANSITIONS.iter().map(|t| card(t.kind.as_str(), t.label, "")).collect();
         state.set_transitions(ModelRc::new(VecModel::from(transitions)));
+        self.draw_card_stills();
+    }
+
+    // ------------------------------------------------------------ cards
+
+    /// Draws the card stills a few per frame, so opening the editor does not wait for them.
+    fn draw_card_stills(self: &Rc<Self>) {
+        let mut pending: Vec<Card> = EFFECTS.iter().map(|e| Card::Effect(e.kind)).chain(TRANSITIONS.iter().map(|t| Card::Transition(t.kind))).collect();
+        pending.reverse();
+        let weak = Rc::downgrade(self);
+        self.cards_timer.start(slint::TimerMode::Repeated, std::time::Duration::from_millis(16), move || {
+            let Some(this) = weak.upgrade() else { return };
+            for _ in 0..4 {
+                let Some(card) = pending.pop() else {
+                    this.cards_timer.stop();
+                    return;
+                };
+                let still = this.with_cards(|cards| cards.still(card));
+                this.update_card(card, |row| row.still = still.clone());
+            }
+        });
+    }
+
+    fn with_cards<T>(&self, draw: impl FnOnce(&mut super::cards::Cards) -> T) -> T {
+        let mut cards = self.cards.borrow_mut();
+        draw(cards.get_or_insert_with(|| super::cards::Cards::new(&self.context.gpu)))
+    }
+
+    fn update_card(&self, card: Card, change: impl Fn(&mut EffectCard)) {
+        let Some(window) = self.context.window() else { return };
+        let state = window.global::<AssetsState>();
+        let (model, value) = match card {
+            Card::Effect(kind) => (state.get_effects(), kind.as_str()),
+            Card::Transition(kind) => (state.get_transitions(), kind.as_str()),
+        };
+        for index in 0..model.row_count() {
+            if let Some(mut row) = model.row_data(index).filter(|row| row.value == value) {
+                change(&mut row);
+                model.set_row_data(index, row);
+            }
+        }
+    }
+
+    /// The pointer rests on a card: its loop is drawn now (once) and plays.
+    fn card_hover(&self, kind: &str, value: &str) {
+        let card = match kind {
+            "effect" => EffectKind::parse(value).map(Card::Effect),
+            "transition" => TransitionKind::parse(value).map(Card::Transition),
+            _ => None,
+        };
+        let Some(card) = card else { return };
+        let frames = self.with_cards(|cards| cards.frames(card));
+        let frames = ModelRc::new(VecModel::from(frames));
+        self.update_card(card, |row| {
+            if row.frames.row_count() == 0 {
+                row.frames = frames.clone();
+            }
+        });
     }
 
     // ------------------------------------------------------------ dragging
@@ -138,7 +199,7 @@ impl EditorController {
             }
             "effect" => {
                 let kind = EffectKind::parse(id)?;
-                Some((Payload::Effect(kind), EFFECTS.iter().find(|e| e.kind == kind).map(|e| e.label).unwrap_or("Effect").to_string()))
+                Some((Payload::Effect(kind), effect_label(kind).to_string()))
             }
             "transition" => {
                 let kind = TransitionKind::parse(id)?;
@@ -304,7 +365,7 @@ impl EditorController {
                 e.select(Some(&id), false);
             }),
             (DropTarget::Clip(id), Payload::Effect(kind)) => self.edit(|e| {
-                e.set_effect(std::slice::from_ref(&id), kind, None);
+                e.add_effect(std::slice::from_ref(&id), kind, None);
                 e.select(Some(&id), false);
             }),
             (DropTarget::Track { track_id, start }, payload) => {
@@ -378,7 +439,18 @@ impl EditorController {
             self.context.toasts.show("Select a video, photo or text clip first");
             return;
         }
-        self.edit(|e| e.set_effect(&targets, kind, None));
+        let full = self
+            .with(|s| {
+                targets.iter().filter_map(|id| s.editor.item(id)).all(|item| item.effects.len() >= MAX_EFFECTS && !item.effects.iter().any(|e| e.kind == kind))
+            })
+            .unwrap_or(false);
+        if full {
+            self.context.toasts.show(&format!("A clip can have up to {MAX_EFFECTS} effects"));
+            return;
+        }
+        self.edit(|e| {
+            e.add_effect(&targets, kind, None);
+        });
     }
 
     fn apply_transition(&self, kind: TransitionKind) {
@@ -392,7 +464,10 @@ impl EditorController {
 
     fn panel_action(&self, action: &str) {
         match action {
-            "remove-effect" => self.apply_effect(EffectKind::None),
+            "remove-effect" => {
+                let targets = self.with(|s| effect_targets(&s.editor)).unwrap_or_default();
+                self.edit(|e| e.clear_effects(&targets));
+            }
             "remove-transition" => self.apply_transition(TransitionKind::None),
             "transition-all" => {
                 let seam = self.with(|s| selected_seam(&s.editor)).flatten();
@@ -414,7 +489,7 @@ impl EditorController {
         let Some(asset) = self.with(|s| s.editor.project.assets.iter().find(|a| a.id == id).cloned()).flatten() else { return };
         match action {
             "add" => self.add_from_panel("asset", id),
-            "reveal" => reveal(Path::new(&asset.path)),
+            "reveal" => crate::system::reveal(Path::new(&asset.path)),
             "remove" => self.edit(|e| e.remove_asset(id)),
             "relink" => self.relink(&asset),
             _ => {}
@@ -542,9 +617,18 @@ pub(super) fn sync(editor: &Editor, overviews: &mut super::overview::Overviews, 
     }
 
     let targets = effect_targets(editor);
-    let current = targets.first().and_then(|id| editor.item(id)).map(|item| item.effect()).unwrap_or_default();
+    let on: Vec<EffectKind> = targets.first().and_then(|id| editor.item(id)).map(|item| item.active_effects().map(|e| e.kind).collect()).unwrap_or_default();
     state.set_effect_targets(targets.len() as i32);
-    state.set_current_effect(current.as_str().into());
+    state.set_effects_on(targets.iter().filter_map(|id| editor.item(id)).map(|item| item.active_effects().count()).sum::<usize>() as i32);
+    let cards = state.get_effects();
+    for index in 0..cards.row_count() {
+        let Some(mut row) = cards.row_data(index) else { continue };
+        let lit = EffectKind::parse(&row.value).is_some_and(|kind| on.contains(&kind));
+        if row.on != lit {
+            row.on = lit;
+            cards.set_row_data(index, row);
+        }
+    }
     let seam = selected_seam(editor);
     state.set_has_seam(seam.is_some());
     state.set_seam_kind(seam.as_ref().map(|s| s.kind.as_str()).unwrap_or("none").into());
@@ -559,12 +643,7 @@ pub(super) fn sync(editor: &Editor, overviews: &mut super::overview::Overviews, 
 }
 
 fn effect_targets(editor: &Editor) -> Vec<String> {
-    editor
-        .selected_items()
-        .into_iter()
-        .filter(|item| matches!(item.kind, ItemKind::Video | ItemKind::Image | ItemKind::Text))
-        .map(|item| item.id.clone())
-        .collect()
+    editor.selected_items().into_iter().filter(|item| can_have_effects(item)).map(|item| item.id.clone()).collect()
 }
 
 /// The cut before the selected clip, or else the one after it.
@@ -580,10 +659,6 @@ fn media_kind_track(kind: MediaKind) -> TrackKind {
         MediaKind::Audio => TrackKind::Audio,
         _ => TrackKind::Video,
     }
-}
-
-fn choice(value: &str, label: &str) -> Choice {
-    Choice { value: value.into(), label: label.into(), ..Default::default() }
 }
 
 thread_local! {
@@ -651,39 +726,6 @@ fn premultiplied_image(width: u32, height: u32, pixels: &[u8]) -> Image {
         dst[3] = src[3];
     }
     Image::from_rgba8(buffer)
-}
-
-/// Shows a file in the system file manager.
-pub(super) fn reveal(path: &Path) {
-    // Explorer wants the path quoted after the comma, which normal argument
-    // quoting does not do: written out as it is.
-    #[cfg(target_os = "windows")]
-    let result = {
-        use std::os::windows::process::CommandExt;
-        std::process::Command::new("explorer").raw_arg(format!("/select,\"{}\"", path.display())).spawn()
-    };
-    #[cfg(target_os = "macos")]
-    let result = std::process::Command::new("open").arg("-R").arg(path).spawn();
-    #[cfg(all(unix, not(target_os = "macos")))]
-    let result = std::process::Command::new("xdg-open").arg(path.parent().unwrap_or(path)).spawn();
-    if let Err(error) = result {
-        log::warn!("could not reveal {}: {error}", path.display());
-    }
-}
-
-/// Opens a file with its default application.
-pub(super) fn open_path(path: &Path) {
-    // Explorer opens a file with its default app; `cmd /C start` would read
-    // characters such as & in the file name as commands.
-    #[cfg(target_os = "windows")]
-    let result = std::process::Command::new("explorer").arg(path).spawn();
-    #[cfg(target_os = "macos")]
-    let result = std::process::Command::new("open").arg(path).spawn();
-    #[cfg(all(unix, not(target_os = "macos")))]
-    let result = std::process::Command::new("xdg-open").arg(path).spawn();
-    if let Err(error) = result {
-        log::warn!("could not open {}: {error}", path.display());
-    }
 }
 
 #[cfg(test)]

@@ -143,6 +143,7 @@ pub fn migrate_project(input: &Value) -> Project {
             track.name = "Track".into();
         }
         for item in &mut track.items {
+            item.adopt_legacy_effect();
             item.track_id = track.id.clone();
             item.start = if item.start.is_finite() { item.start.max(0.0) } else { 0.0 };
             item.duration = if item.duration.is_finite() { item.duration.max(0.05) } else { 3.0 };

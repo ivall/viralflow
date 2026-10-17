@@ -390,11 +390,19 @@ pub fn text_detail(item: &TimelineItem) -> f64 {
     for keyframe in &item.keyframes {
         peak = peak.max(keyframe.transform.scale);
     }
+    // Effects that zoom: about 1.2× at their default strength, more when turned up.
+    let zoom = item
+        .active_effects()
+        .filter(|e| matches!(e.kind, EffectKind::Punch | EffectKind::ZoomIn | EffectKind::ZoomOut | EffectKind::Pulse | EffectKind::Sway))
+        .map(|e| 1.0 + 0.4 * e.amount())
+        .fold(1.0, f64::max);
     let grows = item.anim_in.is_some_and(|a| a.kind == AnimationInKind::ZoomOut) || item.anim_out.is_some_and(|a| a.kind == AnimationOutKind::Grow);
     if grows {
         peak *= 1.8;
-    } else if item.anim_in.is_some_and(|a| a.kind != AnimationInKind::None) || matches!(item.effect(), EffectKind::Punch | EffectKind::ZoomIn) {
-        peak *= 1.2;
+    } else if item.anim_in.is_some_and(|a| a.kind != AnimationInKind::None) {
+        peak *= zoom.max(1.2);
+    } else {
+        peak *= zoom;
     }
     [1.0, 1.5, 2.0, 3.0, 4.0, 6.0].into_iter().find(|step| peak <= step * 1.02).unwrap_or(6.0)
 }

@@ -74,7 +74,7 @@ jobs:
       - name: System packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang libclang-dev pkg-config libxkbcommon-dev libfontconfig1-dev libasound2-dev libdbus-1-dev libwayland-dev file
+          sudo apt-get install -y clang libclang-dev cmake g++ pkg-config libxkbcommon-dev libfontconfig1-dev libasound2-dev libdbus-1-dev libwayland-dev file
 
       - name: FFmpeg
         env:
@@ -115,7 +115,7 @@ jobs:
       - name: FFmpeg and tools
         run: |
           brew update --quiet
-          brew install ffmpeg@8 dylibbundler pkg-config
+          brew install ffmpeg@8 dylibbundler pkg-config cmake
           "$(brew --prefix ffmpeg@8)/bin/ffmpeg" -hide_banner -version | head -n 1
           echo "LIBCLANG_PATH=$(bash scripts/libclang-path.sh)" >> "$GITHUB_ENV"
 

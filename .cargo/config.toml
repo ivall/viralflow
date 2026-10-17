@@ -4,3 +4,13 @@
 [env]
 FFMPEG_DIR = { value = "C:/Program Files/ffmpeg", force = false }
 LIBCLANG_PATH = { value = "C:/Program Files/LLVM/bin", force = false }
+
+# whisper.cpp (whisper-rs-sys) passes GGML_* variables on to its cmake build.
+# Never "native": a build machine's CPU is not the user's. AVX2 + FMA + F16C is
+# every x86-64 CPU since 2013; ARM targets ignore these.
+GGML_NATIVE = { value = "OFF", force = false }
+GGML_AVX = { value = "ON", force = false }
+GGML_AVX2 = { value = "ON", force = false }
+GGML_FMA = { value = "ON", force = false }
+GGML_F16C = { value = "ON", force = false }
+GGML_AVX512 = { value = "OFF", force = false }

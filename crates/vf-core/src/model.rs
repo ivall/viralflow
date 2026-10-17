@@ -73,12 +73,20 @@ string_enum!(AnimationOutKind {
 } default None = "none");
 string_enum!(EffectKind {
     Punch = "punch", Shake = "shake", Blur = "blur", Vhs = "vhs", Glitch = "glitch",
-    ZoomIn = "zoom-in", ZoomOut = "zoom-out", Flash = "flash"
+    ZoomIn = "zoom-in", ZoomOut = "zoom-out", Flash = "flash",
+    Pulse = "pulse", Sway = "sway", Strobe = "strobe", RgbSplit = "rgb-split", Pixelate = "pixelate",
+    ZoomBlur = "zoom-blur", Fisheye = "fisheye", Mirror = "mirror", Mono = "mono", Vintage = "vintage",
+    Film = "film", Negative = "negative", Rainbow = "rainbow", Posterize = "posterize", Sharpen = "sharpen",
+    Vignette = "vignette", LightLeak = "light-leak", Letterbox = "letterbox"
 } default None = "none");
 string_enum!(TransitionKind {
     Fade = "fade", Black = "black", White = "white", SlideLeft = "slide-left", SlideRight = "slide-right",
     SlideUp = "slide-up", SlideDown = "slide-down", Zoom = "zoom", Blur = "blur",
-    WipeLeft = "wipe-left", WipeRight = "wipe-right", Flash = "flash", Spin = "spin"
+    WipeLeft = "wipe-left", WipeRight = "wipe-right", Flash = "flash", Spin = "spin",
+    ZoomOut = "zoom-out", ZoomBlur = "zoom-blur", WhipLeft = "whip-left", WhipRight = "whip-right",
+    CoverLeft = "cover-left", CoverRight = "cover-right", WipeUp = "wipe-up", WipeDown = "wipe-down",
+    Iris = "iris", Clock = "clock", Pixelate = "pixelate", Glitch = "glitch", RgbSplit = "rgb-split",
+    LightLeak = "light-leak"
 } default None = "none");
 string_enum!(ShapeKind { Circle = "circle", Line = "line", Blur = "blur" } default Rect = "rect");
 string_enum!(HighlightMode { Color = "color", Box = "box" } default None = "none");
@@ -323,6 +331,41 @@ pub struct EffectRange {
     pub duration: f64,
 }
 
+/// Strength of an effect nobody has adjusted: the look each effect was designed with.
+pub const DEFAULT_EFFECT_AMOUNT: f64 = 0.5;
+
+/// One effect of a clip's stack. Effects apply in order, each over its own
+/// part of the clip.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ClipEffect {
+    pub id: String,
+    pub kind: EffectKind,
+    /// Strength 0..1 (see `DEFAULT_EFFECT_AMOUNT`).
+    pub amount: f64,
+    /// Part of the clip the effect covers, relative to the clip start. Whole clip when absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub range: Option<EffectRange>,
+    #[serde(flatten, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+impl Default for ClipEffect {
+    fn default() -> Self {
+        ClipEffect { id: String::new(), kind: EffectKind::None, amount: DEFAULT_EFFECT_AMOUNT, range: None, extra: Default::default() }
+    }
+}
+
+impl ClipEffect {
+    pub fn amount(&self) -> f64 {
+        if self.amount.is_finite() {
+            self.amount.clamp(0.0, 1.0)
+        } else {
+            DEFAULT_EFFECT_AMOUNT
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default, rename_all = "camelCase")]
 pub struct TimelineItem {
@@ -380,11 +423,15 @@ pub struct TimelineItem {
     pub blend: Option<BlendMode>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub adjust: Option<Adjust>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub effect: Option<EffectKind>,
-    /// Part of the clip the effect covers, relative to the clip start. Whole clip when absent.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub effect_range: Option<EffectRange>,
+    /// The clip's effects, applied in order.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub effects: Vec<ClipEffect>,
+    /// The single effect of documents written before effect stacks; read only,
+    /// moved into `effects` by `adopt_legacy_effect` when a project loads.
+    #[serde(rename = "effect", skip_serializing)]
+    pub legacy_effect: Option<EffectKind>,
+    #[serde(rename = "effectRange", skip_serializing)]
+    pub legacy_effect_range: Option<EffectRange>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub anim_in: Option<Animation<AnimationInKind>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -434,8 +481,23 @@ impl TimelineItem {
         self.radius.unwrap_or(0.0).max(0.0)
     }
 
-    pub fn effect(&self) -> EffectKind {
-        self.effect.unwrap_or(EffectKind::None)
+    /// Effects that do something (an unknown kind reads as None).
+    pub fn active_effects(&self) -> impl Iterator<Item = &ClipEffect> {
+        self.effects.iter().filter(|effect| effect.kind != EffectKind::None)
+    }
+
+    pub fn has_effects(&self) -> bool {
+        self.active_effects().next().is_some()
+    }
+
+    /// Moves the single effect of an older document into `effects`, at the
+    /// strength it always had.
+    pub fn adopt_legacy_effect(&mut self) {
+        let kind = self.legacy_effect.take().unwrap_or_default();
+        let range = self.legacy_effect_range.take();
+        if kind != EffectKind::None && self.effects.is_empty() {
+            self.effects.push(ClipEffect { id: format!("{}-fx", self.id), kind, range, ..Default::default() });
+        }
     }
 
     pub fn text_style(&self) -> TextStyle {
@@ -607,9 +669,10 @@ mod tests {
 
     #[test]
     fn unknown_enum_values_fall_back() {
-        let item: TimelineItem = serde_json::from_str(r#"{"id":"a","kind":"hologram","effect":"sparkles","fit":"cover"}"#).unwrap();
+        let item: TimelineItem = serde_json::from_str(r#"{"id":"a","kind":"hologram","effects":[{"id":"e","kind":"sparkles"}],"fit":"cover"}"#).unwrap();
         assert_eq!(item.kind, ItemKind::Video);
-        assert_eq!(item.effect, Some(EffectKind::None));
+        assert_eq!(item.effects[0].kind, EffectKind::None);
+        assert!(!item.has_effects());
         assert_eq!(item.fit, Some(Fit::Cover));
     }
 
@@ -636,6 +699,22 @@ mod tests {
         assert_eq!(keyframe.bezier, None);
         let keyframe: Keyframe = serde_json::from_str(r#"{"id":"k","easing":"custom","bezier":[0.2,1.4,0.6,-0.3]}"#).unwrap();
         assert_eq!(keyframe.bezier, Some([0.2, 1.4, 0.6, -0.3]));
+    }
+
+    #[test]
+    fn a_legacy_effect_becomes_the_first_of_the_stack() {
+        let mut item: TimelineItem = serde_json::from_str(r#"{"id":"a","kind":"video","effect":"vhs","effectRange":{"start":0.5,"duration":1}}"#).unwrap();
+        item.adopt_legacy_effect();
+        assert_eq!(item.effects.len(), 1);
+        assert_eq!(item.effects[0].kind, EffectKind::Vhs);
+        assert_eq!(item.effects[0].amount, DEFAULT_EFFECT_AMOUNT);
+        assert_eq!(item.effects[0].range, Some(EffectRange { start: 0.5, duration: 1.0 }));
+        let json = serde_json::to_value(&item).unwrap();
+        assert!(json.get("effect").is_none() && json.get("effectRange").is_none());
+        assert_eq!(json["effects"][0]["kind"], "vhs");
+        // Read twice, it is still one effect.
+        item.adopt_legacy_effect();
+        assert_eq!(item.effects.len(), 1);
     }
 
     #[test]

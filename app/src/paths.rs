@@ -15,16 +15,24 @@ pub struct AppPaths {
     pub models: PathBuf,
     pub jobs: PathBuf,
     pub builtin: PathBuf,
+    /// One log file per run (see `logs`).
+    pub logs: PathBuf,
+}
+
+/// The app's data folder (settings, projects, models, logs).
+pub fn data_dir() -> Result<PathBuf> {
+    Ok(dirs::data_dir().ok_or_else(|| Error::msg("No application data folder"))?.join(IDENTIFIER))
 }
 
 impl AppPaths {
     pub fn resolve() -> Result<Self> {
-        let data = dirs::data_dir().ok_or_else(|| Error::msg("No application data folder"))?.join(IDENTIFIER);
+        let data = data_dir()?;
         let cache = dirs::cache_dir().ok_or_else(|| Error::msg("No cache folder"))?.join(IDENTIFIER);
         let paths = AppPaths {
             projects: data.join("projects"),
             models: data.join("models"),
             builtin: data.join("builtin"),
+            logs: data.join("logs"),
             media_cache: cache.join("media"),
             jobs: cache.join("jobs"),
             data,
@@ -43,6 +51,7 @@ impl AppPaths {
             projects: root.join("data/projects"),
             models: root.join("data/models"),
             builtin: root.join("data/builtin"),
+            logs: root.join("data/logs"),
             media_cache: root.join("cache/media"),
             jobs: root.join("cache/jobs"),
         };
@@ -51,7 +60,7 @@ impl AppPaths {
     }
 
     fn create(&self) -> Result<()> {
-        for dir in [&self.data, &self.cache, &self.projects, &self.models, &self.builtin, &self.media_cache, &self.jobs] {
+        for dir in [&self.data, &self.cache, &self.projects, &self.models, &self.builtin, &self.logs, &self.media_cache, &self.jobs] {
             std::fs::create_dir_all(dir)?;
         }
         Ok(())

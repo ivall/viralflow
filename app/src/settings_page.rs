@@ -71,6 +71,7 @@ impl SettingsPage {
                 me.update(|s| s.export_folder = folder.display().to_string());
             }
         });
+        on!(on_open_logs, |me| crate::system::open_path(&me.context.paths.logs));
         on!(on_open_picker, |me, speech| me.open_picker(speech));
         on!(on_picker_changed, |me| me.show_models());
         on!(on_picker_filter, |me, field, value| {
@@ -145,7 +146,7 @@ impl SettingsPage {
                 id: m.id.into(),
                 label: m.label.into(),
                 size: format::bytes(m.size).into(),
-                installed: whisper::model_path(&self.context.paths.models, m.id).is_file(),
+                installed: whisper::is_installed(&self.context.paths.models, m.id),
                 downloading: download.as_ref().is_some_and(|(id, _)| id == m.id),
                 fraction: download.as_ref().filter(|(id, _)| id == m.id).map(|(_, f)| *f).unwrap_or(0.0),
             })
@@ -156,8 +157,7 @@ impl SettingsPage {
         state.set_engine(format!("FFmpeg is built in ({})", vf_media::version()).into());
         state.set_engine_detail(
             format!(
-                "Speech recognition: {} · GPU encoders: {}",
-                if whisper::available() { "available" } else { "not in this build" },
+                "Speech recognition: built in (whisper.cpp) · GPU encoders: {}",
                 if hardware.is_empty() { "none".to_string() } else { hardware.join(", ") }
             )
             .into(),

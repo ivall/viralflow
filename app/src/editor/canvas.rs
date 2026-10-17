@@ -203,6 +203,7 @@ mod tests {
             grain: 0.0,
             scanlines: false,
             glitch: vec![],
+            fx: Default::default(),
         }
     }
 

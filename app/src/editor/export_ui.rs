@@ -44,8 +44,8 @@ impl EditorController {
                 }
             }
         });
-        on!(on_reveal, |this| super::assets::reveal(std::path::Path::new(&this.export_result.borrow().clone())));
-        on!(on_play, |this| super::assets::open_path(std::path::Path::new(&this.export_result.borrow().clone())));
+        on!(on_reveal, |this| crate::system::reveal(std::path::Path::new(&this.export_result.borrow().clone())));
+        on!(on_play, |this| crate::system::open_path(std::path::Path::new(&this.export_result.borrow().clone())));
         // Which GPU encoders work is probed once, off the UI thread.
         std::thread::Builder::new()
             .name("encoder-probe".into())
@@ -269,7 +269,7 @@ impl EditorController {
                         "Your video is ready",
                         &path.display().to_string(),
                         "Show in folder",
-                        move || super::assets::reveal(&file),
+                        move || crate::system::reveal(&file),
                     );
                 }
             }

@@ -9,8 +9,11 @@ use vf_core::model::BlendMode;
 use crate::Gpu;
 
 pub const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+/// Pass uniforms sit 256 bytes apart (the dynamic offset alignment); a layer's
+/// uniform is larger and takes two slots.
 const UNIFORM_STRIDE: u64 = 256;
-const LAYER_UNIFORM_SIZE: u64 = 224;
+const LAYER_STRIDE: u64 = 512;
+const LAYER_UNIFORM_SIZE: u64 = 288;
 const PASS_UNIFORM_SIZE: u64 = 32;
 /// Most blur taps per side in one pass; larger blurs run on a smaller image.
 const MAX_TAPS: f32 = 24.0;
@@ -166,7 +169,7 @@ impl Compositor {
         let blur_pipeline = pipeline(&pass_layout, "vs_full", "fs_blur", None);
         let composite_pipeline = pipeline(&pass_layout, "vs_full", "fs_composite", None);
         let capacity = 64;
-        let (layer_uniforms, layer_group) = Self::uniform_buffer(device, &layer_layout, 0, LAYER_UNIFORM_SIZE, capacity);
+        let (layer_uniforms, layer_group) = Self::uniform_buffer(device, &layer_layout, 0, LAYER_UNIFORM_SIZE, capacity * LAYER_STRIDE / UNIFORM_STRIDE);
         let (pass_uniforms, pass_group) = Self::uniform_buffer(device, &pass_layout, 1, PASS_UNIFORM_SIZE, capacity * 4);
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("linear"),
@@ -222,7 +225,7 @@ impl Compositor {
         let device = &self.gpu.device;
         let layer_layout = uniform_layout(device, 0, LAYER_UNIFORM_SIZE);
         let pass_layout = uniform_layout(device, 1, PASS_UNIFORM_SIZE);
-        (self.layer_uniforms, self.layer_group) = Self::uniform_buffer(device, &layer_layout, 0, LAYER_UNIFORM_SIZE, capacity);
+        (self.layer_uniforms, self.layer_group) = Self::uniform_buffer(device, &layer_layout, 0, LAYER_UNIFORM_SIZE, capacity * LAYER_STRIDE / UNIFORM_STRIDE);
         (self.pass_uniforms, self.pass_group) = Self::uniform_buffer(device, &pass_layout, 1, PASS_UNIFORM_SIZE, capacity * 4);
         self.capacity = capacity;
     }
@@ -271,7 +274,7 @@ impl Compositor {
         }
         let mut pass_slot: u64 = 0;
         for (index, draw) in layers.iter().enumerate() {
-            let offset = index as u64 * UNIFORM_STRIDE;
+            let offset = index as u64 * LAYER_STRIDE;
             queue.write_buffer(&self.layer_uniforms, offset, &layer_uniform(draw, k, width, height, frame));
             let layer = draw.layer;
             match &draw.content {
@@ -466,7 +469,8 @@ fn layer_uniform(draw: &DrawLayer, k: f64, width: u32, height: u32, frame: i64) 
         *slot = value / 100.0;
     }
     let matrix = layer.matrix.unwrap_or(vf_core::engine::color::IDENTITY);
-    let values: [f64; 56] = [
+    let fx = &layer.fx;
+    let values: [f64; 72] = [
         m00,
         m01,
         m10,
@@ -524,6 +528,23 @@ fn layer_uniform(draw: &DrawLayer, k: f64, width: u32, height: u32, frame: i64) 
         matrix[9],
         matrix[14],
         matrix[19],
+        // Treatments (see `LayerFx`); pixel blocks in target pixels of the box.
+        fx.chroma,
+        fx.pixelate * k,
+        fx.posterize,
+        fx.sharpen,
+        fx.bulge,
+        if fx.mirror { 1.0 } else { 0.0 },
+        fx.zoom_blur,
+        fx.leak,
+        fx.leak_phase,
+        fx.clip_top,
+        fx.clip_bottom,
+        fx.iris,
+        fx.clock,
+        0.0,
+        0.0,
+        0.0,
     ];
     values.iter().flat_map(|v| (*v as f32).to_ne_bytes()).collect()
 }

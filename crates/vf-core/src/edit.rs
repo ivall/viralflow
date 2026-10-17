@@ -19,6 +19,13 @@ use crate::presets::{create_track, item_name, media_item, preset_text_style, Tex
 use crate::timeline::{place_selection, place_span, repair_layout, ripple_resize, spans_of, trim_span, Edge, SelectionSpan, Span, HORIZON, MIN_CLIP_DURATION};
 
 const HISTORY_LIMIT: usize = 120;
+/// Effects one clip can carry.
+pub const MAX_EFFECTS: usize = 8;
+
+/// Effects go on pictures and words, not on sound or shapes.
+pub fn can_have_effects(item: &TimelineItem) -> bool {
+    !matches!(item.kind, ItemKind::Audio | ItemKind::Shape)
+}
 
 /// Where a new clip should go.
 #[derive(Debug, Clone, Default)]
@@ -52,18 +59,53 @@ impl TransformPatch {
 }
 
 /// Clip state when a trim gesture began.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct TrimOrigin {
     pub start: f64,
     pub duration: f64,
     pub source_in: f64,
-    pub effect_range: Option<EffectRange>,
+    /// Each effect's range, by effect id.
+    pub effect_ranges: Vec<(String, Option<EffectRange>)>,
 }
 
 impl TrimOrigin {
     pub fn of(item: &TimelineItem) -> Self {
-        TrimOrigin { start: item.start, duration: item.duration, source_in: item.source_in(), effect_range: item.effect_range }
+        TrimOrigin {
+            start: item.start,
+            duration: item.duration,
+            source_in: item.source_in(),
+            effect_ranges: item.effects.iter().map(|e| (e.id.clone(), e.range)).collect(),
+        }
     }
+}
+
+/// A clip's effects split at `offset` seconds into it: the ones (or the parts
+/// of them) before the cut, then the ones after, relative to each half.
+fn split_effects(effects: &[ClipEffect], duration: f64, offset: f64) -> (Vec<ClipEffect>, Vec<ClipEffect>) {
+    let (mut left, mut right) = (Vec::new(), Vec::new());
+    for effect in effects {
+        if effect.range.is_none() {
+            left.push(effect.clone());
+            right.push(ClipEffect { id: uid("fx"), ..effect.clone() });
+            continue;
+        }
+        let window = effect_window(duration, effect.range);
+        let left_end = offset.min(window.start + window.duration);
+        if left_end - window.start >= MIN_EFFECT {
+            left.push(ClipEffect { range: Some(EffectRange { start: window.start, duration: left_end - window.start }), ..effect.clone() });
+        }
+        let right_start = (window.start - offset).max(0.0);
+        let right_end = window.start + window.duration - offset;
+        if right_end - right_start >= MIN_EFFECT {
+            right.push(ClipEffect { id: uid("fx"), range: Some(EffectRange { start: right_start, duration: right_end - right_start }), ..effect.clone() });
+        }
+    }
+    (left, right)
+}
+
+/// The range to store: None when it covers the whole clip.
+fn stored_range(duration: f64, window: EffectRange) -> Option<EffectRange> {
+    (!(window.start <= 1e-6 && window.duration >= duration - 1e-6)).then_some(window)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -728,10 +770,12 @@ impl Editor {
         if !item.keyframes.is_empty() {
             item.keyframes = retime_keyframes(&item.keyframes, before, item.duration);
         }
-        if let Some(range) = item.effect_range {
-            if before > 0.0 {
-                let ratio = item.duration / before;
-                item.effect_range = Some(EffectRange { start: range.start * ratio, duration: range.duration * ratio });
+        if before > 0.0 {
+            let ratio = item.duration / before;
+            for effect in &mut item.effects {
+                if let Some(range) = effect.range {
+                    effect.range = Some(EffectRange { start: range.start * ratio, duration: range.duration * ratio });
+                }
             }
         }
         for neighbour in &mut self.project.tracks[t].items {
@@ -875,11 +919,12 @@ impl Editor {
                 }
             }
         }
-        if let Some(range) = original.effect_range {
-            // Ranged effects stay where they are on the timeline while the clip edge moves.
-            let shift = target.start - original.start;
+        // Ranged effects stay where they are on the timeline while the clip edge moves.
+        let shift = target.start - original.start;
+        for effect in &mut target.effects {
+            let Some(Some(range)) = original.effect_ranges.iter().find(|(id, _)| *id == effect.id).map(|(_, range)| *range) else { continue };
             let moved = EffectRange { start: range.start - shift, duration: range.duration + (range.start - shift).min(0.0) };
-            target.effect_range = Some(effect_window(target.duration, Some(moved)));
+            effect.range = Some(effect_window(target.duration, Some(moved)));
         }
         self.repair_all([t]);
         self.touched();
@@ -968,24 +1013,7 @@ impl Editor {
             if right.fade_in() > 0.0 {
                 right.fade_in = Some(0.0);
             }
-            if before.effect() != EffectKind::None && before.effect_range.is_some() {
-                let window = effect_window(before.duration, before.effect_range);
-                let left_end = offset.min(window.start + window.duration);
-                if left_end - window.start >= MIN_EFFECT {
-                    left.effect_range = Some(EffectRange { start: window.start, duration: left_end - window.start });
-                } else {
-                    left.effect = None;
-                    left.effect_range = None;
-                }
-                let right_start = (window.start - offset).max(0.0);
-                let right_end = window.start + window.duration - offset;
-                if right_end - right_start >= MIN_EFFECT {
-                    right.effect_range = Some(EffectRange { start: right_start, duration: right_end - right_start });
-                } else {
-                    right.effect = None;
-                    right.effect_range = None;
-                }
-            }
+            (left.effects, right.effects) = split_effects(&before.effects, before.duration, offset);
             left.duration = offset;
             left.keyframes = if before.keyframes.is_empty() { vec![] } else { trim_keyframes(&before, 0.0, offset) };
             created.push(right.id.clone());
@@ -1332,46 +1360,96 @@ impl Editor {
         self.touched();
     }
 
-    /// Puts an effect on clips. A new effect covers the whole clip; `range` limits it.
-    pub fn set_effect(&mut self, ids: &[String], kind: EffectKind, range: Option<EffectRange>) {
-        let targets: Vec<(usize, usize)> = ids
-            .iter()
-            .filter_map(|id| self.editable(id))
-            .filter(|&(t, i)| !matches!(self.project.tracks[t].items[i].kind, ItemKind::Audio | ItemKind::Shape))
-            .collect();
+    fn effect_targets(&self, ids: &[String]) -> Vec<(usize, usize)> {
+        ids.iter().filter_map(|id| self.editable(id)).filter(|&(t, i)| can_have_effects(&self.project.tracks[t].items[i])).collect()
+    }
+
+    /// Adds an effect to the top of each clip's stack, covering the whole clip
+    /// or `range`. A clip that has the effect already keeps it (moved to `range`
+    /// when one is given) rather than getting it twice. Returns the effect's id
+    /// on each clip, as (clip, effect).
+    pub fn add_effect(&mut self, ids: &[String], kind: EffectKind, range: Option<EffectRange>) -> Vec<(String, String)> {
+        let targets = self.effect_targets(ids);
+        if targets.is_empty() || kind == EffectKind::None {
+            return vec![];
+        }
+        self.snapshot();
+        let mut added = Vec::new();
+        for target in targets {
+            let item = self.at(target);
+            let window = range.map(|r| effect_window(item.duration, Some(r)));
+            let duration = item.duration;
+            let full = item.effects.len() >= MAX_EFFECTS;
+            let id = match item.effects.iter_mut().find(|e| e.kind == kind) {
+                Some(existing) => {
+                    if let Some(window) = window {
+                        existing.range = stored_range(duration, window);
+                    }
+                    existing.id.clone()
+                }
+                None if full => continue,
+                None => {
+                    let effect = ClipEffect { id: uid("fx"), kind, range: window.and_then(|w| stored_range(duration, w)), ..Default::default() };
+                    let id = effect.id.clone();
+                    item.effects.push(effect);
+                    id
+                }
+            };
+            added.push((item.id.clone(), id));
+        }
+        self.touched();
+        added
+    }
+
+    /// Takes one effect off a clip.
+    pub fn remove_effect(&mut self, item_id: &str, effect_id: &str) {
+        let Some(target) = self.editable(item_id) else { return };
+        if !self.project.tracks[target.0].items[target.1].effects.iter().any(|e| e.id == effect_id) {
+            return;
+        }
+        self.snapshot();
+        self.at(target).effects.retain(|e| e.id != effect_id);
+        self.touched();
+    }
+
+    /// Takes every effect off the clips.
+    pub fn clear_effects(&mut self, ids: &[String]) {
+        let targets: Vec<_> = self.effect_targets(ids).into_iter().filter(|&(t, i)| !self.project.tracks[t].items[i].effects.is_empty()).collect();
         if targets.is_empty() {
             return;
         }
         self.snapshot();
         for target in targets {
-            let item = self.at(target);
-            if kind == EffectKind::None {
-                item.effect = None;
-                item.effect_range = None;
-                continue;
-            }
-            if range.is_some() {
-                item.effect_range = Some(effect_window(item.duration, range));
-            } else if item.effect() != kind {
-                item.effect_range = None;
-            }
-            item.effect = Some(kind);
+            self.at(target).effects.clear();
         }
         self.touched();
     }
 
-    /// Moves or stretches the part of the clip an effect covers (relative to the clip start).
-    pub fn set_effect_range(&mut self, item_id: &str, range: EffectRange, record: bool) {
-        let Some(target) = self.editable(item_id) else { return };
-        if self.project.tracks[target.0].items[target.1].effect() == EffectKind::None {
-            return;
-        }
+    fn effect_mut(&mut self, item_id: &str, effect_id: &str, record: bool) -> Option<(f64, &mut ClipEffect)> {
+        let target = self.editable(item_id)?;
+        self.project.tracks[target.0].items[target.1].effects.iter().position(|e| e.id == effect_id)?;
         if record {
             self.snapshot();
         }
         let item = self.at(target);
-        let window = effect_window(item.duration, Some(range));
-        item.effect_range = if window.start <= 1e-6 && window.duration >= item.duration - 1e-6 { None } else { Some(window) };
+        let duration = item.duration;
+        item.effects.iter_mut().find(|e| e.id == effect_id).map(|effect| (duration, effect))
+    }
+
+    /// Strength of one effect, 0..1.
+    pub fn set_effect_amount(&mut self, item_id: &str, effect_id: &str, amount: f64, record: bool) {
+        if !amount.is_finite() {
+            return;
+        }
+        let Some((_, effect)) = self.effect_mut(item_id, effect_id, record) else { return };
+        effect.amount = clamp(amount, 0.0, 1.0);
+        self.touched();
+    }
+
+    /// Moves or stretches the part of the clip an effect covers (relative to the clip start).
+    pub fn set_effect_range(&mut self, item_id: &str, effect_id: &str, range: EffectRange, record: bool) {
+        let Some((duration, effect)) = self.effect_mut(item_id, effect_id, record) else { return };
+        effect.range = stored_range(duration, effect_window(duration, Some(range)));
         self.touched();
     }
 
@@ -1600,6 +1678,58 @@ mod tests {
         assert!((items[0].duration - 0.5).abs() < 1e-9);
         assert!((items[1].start - 0.5).abs() < 1e-9);
         assert!((items[1].duration - 1.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn effects_stack_and_come_off_one_by_one() {
+        let mut e = editor();
+        let id = add_text(&mut e, 0.0);
+        let ids = vec![id.clone()];
+        let blur = e.add_effect(&ids, EffectKind::Blur, None)[0].1.clone();
+        let glitch = e.add_effect(&ids, EffectKind::Glitch, Some(EffectRange { start: 0.5, duration: 1.0 }))[0].1.clone();
+        // The same effect again is the one already there.
+        assert_eq!(e.add_effect(&ids, EffectKind::Blur, None)[0].1, blur);
+        let item = e.item(&id).unwrap();
+        assert_eq!(item.effects.iter().map(|x| x.kind).collect::<Vec<_>>(), [EffectKind::Blur, EffectKind::Glitch]);
+        assert_eq!(item.effects[1].range, Some(EffectRange { start: 0.5, duration: 1.0 }));
+        e.set_effect_amount(&id, &blur, 0.9, true);
+        assert_eq!(e.item(&id).unwrap().effects[0].amount, 0.9);
+        // A range over the whole clip is stored as no range.
+        e.set_effect_range(&id, &glitch, EffectRange { start: 0.0, duration: 5.0 }, true);
+        assert_eq!(e.item(&id).unwrap().effects[1].range, None);
+        e.remove_effect(&id, &blur);
+        assert_eq!(e.item(&id).unwrap().effects.len(), 1);
+        assert!(e.undo());
+        assert_eq!(e.item(&id).unwrap().effects.len(), 2);
+        e.clear_effects(&ids);
+        assert!(e.item(&id).unwrap().effects.is_empty());
+    }
+
+    #[test]
+    fn splitting_divides_each_effect() {
+        let mut e = editor();
+        let id = add_text(&mut e, 0.0);
+        let ids = vec![id.clone()];
+        e.add_effect(&ids, EffectKind::Mono, None);
+        e.add_effect(&ids, EffectKind::Blur, Some(EffectRange { start: 0.2, duration: 0.6 }));
+        e.add_effect(&ids, EffectKind::Glitch, Some(EffectRange { start: 1.2, duration: 0.5 }));
+        e.select(None, false);
+        e.split_at(1.0);
+        let items = &e.project.tracks[0].items;
+        let kinds = |i: usize| items[i].effects.iter().map(|x| x.kind).collect::<Vec<_>>();
+        assert_eq!(kinds(0), [EffectKind::Mono, EffectKind::Blur]);
+        assert_eq!(kinds(1), [EffectKind::Mono, EffectKind::Glitch]);
+        let tail = items[1].effects[1].range.unwrap();
+        assert!((tail.start - 0.2).abs() < 1e-9 && (tail.duration - 0.5).abs() < 1e-9, "{tail:?}");
+        assert_ne!(items[0].effects[0].id, items[1].effects[0].id, "each half has its own effect");
+    }
+
+    #[test]
+    fn effects_stay_off_sound_and_shapes() {
+        let mut e = editor();
+        let shape = e.add_item(crate::presets::shape_item(ShapeKind::Rect), Placement::default()).unwrap();
+        assert!(e.add_effect(std::slice::from_ref(&shape), EffectKind::Blur, None).is_empty());
+        assert!(e.item(&shape).unwrap().effects.is_empty());
     }
 
     #[test]

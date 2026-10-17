@@ -26,7 +26,8 @@ Native, lightweight & fast.
 - Multi-track timeline with video, photos, text, stickers and audio.
 - Move, scale and rotate anything right on the preview, with keyframes for animation.
 - Auto captions with word-by-word timing, generated locally with Whisper, with styles that light up each spoken word.
-- Transitions and effects you drag onto the timeline and stretch to length, plus in/out animations and color correction.
+- 26 effects (motion, glitch, RGB split, pixelate, zoom blur, fisheye, film looks, light leaks…) that stack on a clip, each with its own strength and time range, and 27 transitions. You drag them onto the timeline and stretch them to length; every card in the panels is drawn by the same renderer as the export.
+- In/out animations and color correction.
 - Text styles made for short-form video, with custom fonts, outlines, boxes, glows and shadows.
 - Export to MP4, MOV or WebM up to 4K, with GPU encoding (NVIDIA, AMD, Intel, Apple), voice cleanup and loudness normalisation.
 - Smooth preview: frames are decoded ahead of the playhead (on the GPU for HEVC, AV1 and 4K footage), and what you hear while editing is exactly what gets exported.
@@ -59,8 +60,7 @@ included everywhere, nothing else to install.
 | Linux (x64 / arm64) | `ViralFlow-…-linux-x86_64.AppImage` (`chmod +x`, run) or the `.tar.gz` |
 
 Builds aren't code-signed yet: Windows SmartScreen may ask for confirmation, and on macOS open the
-app the first time with right-click → *Open*. Local Whisper captions need FFmpeg's `whisper` filter,
-which the bundled Windows build has; on macOS and Linux use cloud captions (OpenRouter).
+app the first time with right-click → *Open*.
 
 Projects and settings of earlier (Tauri) versions open unchanged.
 
@@ -71,7 +71,8 @@ export are rendered by the same [wgpu](https://wgpu.rs) compositor, so what you 
 export, and the sound comes from one mixer for both (pitch-preserving speed changes, voice
 cleanup, BS.1770 loudness and a limiter). Media is decoded and encoded by FFmpeg's libraries inside
 the app (no command-line tools), on the GPU where that is faster, and speech recognition runs
-through whisper.cpp in FFmpeg's `whisper` filter.
+whisper.cpp inside the app (on the GPU on macOS); speech models are checked against their SHA-256
+after download.
 
 The preview keeps a memory-bounded cache of decoded frames filled ahead of the playhead, so
 playback shows every frame on time and scrubbing back over what you just watched is instant.
@@ -90,10 +91,10 @@ for how the pieces fit together.
 
 ## Build from source
 
-Requires stable Rust, libclang (for the FFmpeg bindings) and an FFmpeg 8 **shared** build with
-headers (FFmpeg 9 is not supported yet).
+Requires stable Rust, libclang (for the FFmpeg bindings), CMake and a C++ compiler (for whisper.cpp)
+and an FFmpeg 8 **shared** build with headers (FFmpeg 9 is not supported yet).
 
-**Windows:** `winget install LLVM.LLVM` and the "full_build-shared" FFmpeg 8 package from
+**Windows:** `winget install LLVM.LLVM Kitware.CMake`, the Visual Studio C++ build tools and the "full_build-shared" FFmpeg 8 package from
 [gyan.dev](https://www.gyan.dev/ffmpeg/builds/). By default the build looks in
 `C:\Program Files\ffmpeg` and `C:\Program Files\LLVM` (see `.cargo/config.toml`); set `FFMPEG_DIR` /
 `LIBCLANG_PATH` for other folders. FFmpeg's `bin` folder must be on `PATH` to run a development build.
@@ -109,7 +110,7 @@ LLVM folder (the packaging scripts find libclang themselves).
 **Linux** (Ubuntu/Debian package names):
 
 ```sh
-sudo apt install clang libclang-dev pkg-config libxkbcommon-dev libfontconfig1-dev libasound2-dev libdbus-1-dev libwayland-dev
+sudo apt install clang libclang-dev cmake g++ pkg-config libxkbcommon-dev libfontconfig1-dev libasound2-dev libdbus-1-dev libwayland-dev
 bash scripts/ci/ffmpeg-linux.sh       # FFmpeg 8 shared build into ./ffmpeg-download
 export FFMPEG_DIR=$PWD/ffmpeg-download PKG_CONFIG_PATH=$PWD/ffmpeg-download/lib/pkgconfig LD_LIBRARY_PATH=$PWD/ffmpeg-download/lib
 export LIBCLANG_PATH=$(bash scripts/libclang-path.sh)
@@ -120,7 +121,7 @@ bash scripts/package-linux.sh         # AppImage and .tar.gz in dist/
 **macOS:**
 
 ```sh
-brew install ffmpeg@8 pkg-config dylibbundler
+brew install ffmpeg@8 pkg-config cmake dylibbundler
 export FFMPEG_DIR=$(brew --prefix ffmpeg@8) PKG_CONFIG_PATH=$(brew --prefix ffmpeg@8)/lib/pkgconfig
 export LIBCLANG_PATH=$(bash scripts/libclang-path.sh)
 cargo run -p viralflow
@@ -136,10 +137,17 @@ builds every installer on GitHub Actions and attaches them to a draft release.
 ## Privacy
 
 Everything runs on your computer: media, projects and local Whisper captions never leave it. The
-app goes online only when you ask it to: to download a Whisper speech model (from Hugging Face),
+app goes online only when you ask it to: to download a Whisper speech model (from a pinned commit on
+Hugging Face, checked against its SHA-256),
 and for the AI tools, which are off until you add your own [OpenRouter](https://openrouter.ai)
 key. Only what you send to them (text, the clip's audio, photos for auto-edit) is uploaded. The
 key is kept in the system credential store.
+
+## Logs
+
+Each run writes a log to `logs/` in the app's data folder (Settings → Media engine → Logs opens it);
+the last ten runs are kept. Crashes are logged there with a backtrace: attach the newest file to a
+bug report.
 
 ## Contributing
 

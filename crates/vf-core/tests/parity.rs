@@ -3,7 +3,7 @@
 //! port renders exactly what the previous app rendered.
 
 use vf_core::engine::scene::{resolve_scene, scene_connections, TextMeasure};
-use vf_core::model::{Project, TimelineItem};
+use vf_core::model::TimelineItem;
 
 struct FixedText;
 
@@ -16,7 +16,9 @@ impl TextMeasure for FixedText {
 #[test]
 fn scene_matches_reference() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
-    let project: Project = serde_json::from_slice(&std::fs::read(root.join("parity-project.json")).unwrap()).unwrap();
+    // Loaded the way the app loads a project (single effects become stacks).
+    let document: serde_json::Value = serde_json::from_slice(&std::fs::read(root.join("parity-project.json")).unwrap()).unwrap();
+    let project = vf_core::migrate::migrate_project(&document);
     let expected: serde_json::Value = serde_json::from_slice(&std::fs::read(root.join("parity-expected.json")).unwrap()).unwrap();
     let connections = scene_connections(&project);
     let close = |a: f64, b: &serde_json::Value, what: &str, time: f64| {

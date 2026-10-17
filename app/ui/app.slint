@@ -19,12 +19,12 @@ import { HomeView, HomeState, ProjectCard, AspectCard } from "home.slint";
 import { AutoEditState, FileRow, RowState } from "autoedit.slint";
 import { SettingsView, SettingsState, SpeechModel, ModelRow } from "settings.slint";
 import { EditorView, EditorState, TimelineState, InspectorState, AssetsState, DragState, ExportState, ExportPhase, CaptionsState } from "editor/editor.slint";
-import { AssetTile, PresetCard, StickerGroup, ShapeCard } from "editor/assets.slint";
-import { ItemInfo, TransformData, FrameData, TextData, ShapeData, AdjustData, AudioData, SpeedData, AnimationData, ProjectData, Stat } from "editor/inspector.slint";
-import { TrackRow, ClipView, KeyMark, SeamView, Tick } from "editor/timeline.slint";
+import { AssetTile, PresetCard, StickerGroup, ShapeCard, EffectCard } from "editor/assets.slint";
+import { ItemInfo, TransformData, FrameData, TextData, ShapeData, AdjustData, AudioData, SpeedData, AnimationData, ProjectData, Stat, EffectRow } from "editor/inspector.slint";
+import { TrackRow, ClipView, KeyMark, SeamView, Tick, EffectBar } from "editor/timeline.slint";
 import { SaveState, Handle, PointerPhase } from "editor/state.slint";
 
-export { Theme, Icons, Platform, HomeState, ProjectCard, AspectCard, Toast, ToastTone, EditorState, SaveState, Handle, PointerPhase, MenuEntry, TimelineState, TrackRow, ClipView, KeyMark, SeamView, Tick, InspectorState, ItemInfo, TransformData, FrameData, TextData, ShapeData, AdjustData, AudioData, SpeedData, AnimationData, ProjectData, Stat, Choice, AssetsState, DragState, AssetTile, PresetCard, StickerGroup, ShapeCard, ExportState, ExportPhase, CaptionsState, AutoEditState, FileRow, RowState, SettingsState, SpeechModel, ModelRow }
+export { Theme, Icons, Platform, HomeState, ProjectCard, AspectCard, Toast, ToastTone, EditorState, SaveState, Handle, PointerPhase, MenuEntry, TimelineState, TrackRow, ClipView, KeyMark, SeamView, Tick, EffectBar, InspectorState, ItemInfo, TransformData, FrameData, TextData, ShapeData, AdjustData, AudioData, SpeedData, AnimationData, ProjectData, Stat, EffectRow, Choice, AssetsState, DragState, AssetTile, PresetCard, StickerGroup, ShapeCard, EffectCard, ExportState, ExportPhase, CaptionsState, AutoEditState, FileRow, RowState, SettingsState, SpeechModel, ModelRow }
 
 export enum Page { home, editor, settings }
 

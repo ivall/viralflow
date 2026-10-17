@@ -11,7 +11,6 @@ use slint::{ComponentHandle, ModelRc, VecModel};
 use vf_ai::openrouter::{self, Client};
 use vf_ai::transcript::{build_transcript, CaptionOptions as Grouping};
 use vf_ai::whisper;
-use vf_core::engine::math::uid;
 use vf_core::generators::{build_auto_edit_project, AutoEditInput, ImageEvent};
 use vf_core::model::{MediaAsset, MediaKind};
 use vf_core::presets::ASPECT_PRESETS;
@@ -40,7 +39,6 @@ struct Job {
     chat_model: String,
     cloud_model: String,
     whisper_model: PathBuf,
-    jobs: PathBuf,
     projects: PathBuf,
     sounds: PathBuf,
 }
@@ -217,7 +215,6 @@ impl AutoEdit {
             chat_model: settings.openrouter_model.clone(),
             cloud_model: settings.openrouter_transcription_model.clone(),
             whisper_model: whisper::model_path(&self.context.paths.models, &settings.whisper_model),
-            jobs: self.context.paths.jobs.clone(),
             projects: self.context.paths.projects.clone(),
             sounds: self.context.paths.builtin.clone(),
         };
@@ -294,18 +291,9 @@ fn run_job(job: Job, sender: &std::sync::mpsc::Sender<Message>) {
                 let wav = vf_ai::speech::speech_wav(std::path::Path::new(&voice.path), 0.0, duration)?;
                 client.transcribe(&job.cloud_model, &wav, &job.language)?
             } else {
-                let work = job.jobs.join(uid("auto-edit"));
-                let request = whisper::Request {
-                    model: &job.whisper_model,
-                    source: std::path::Path::new(&voice.path),
-                    offset: 0.0,
-                    duration,
-                    language: &job.language,
-                    work_dir: &work,
-                };
-                let result = whisper::transcribe(&request, &|_, _| {}, &|| false);
-                let _ = std::fs::remove_dir_all(&work);
-                result?
+                let request =
+                    whisper::Request { model: &job.whisper_model, source: std::path::Path::new(&voice.path), offset: 0.0, duration, language: &job.language };
+                whisper::transcribe(&request, &|_| {}, &|| false)?
             };
             let transcript = build_transcript(segments, words, duration, Grouping { max_words: 3 });
             let mut events = Vec::new();

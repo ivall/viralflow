@@ -16,6 +16,15 @@ export struct TrackRow {
     drop-hint: bool,
 }
 
+export struct EffectBar {
+    id: string,
+    x: length,
+    y: length,
+    width: length,
+    height: length,
+    label: string,
+}
+
 export struct ClipView {
     id: string,
     x: length,
@@ -38,10 +47,8 @@ export struct ClipView {
     has-picture: bool,
     picture-x: length,
     picture-width: length,
-    effect: bool,
-    effect-x: length,
-    effect-width: length,
-    effect-label: string,
+    /// Effect bars, laid out in lanes (y inside the clip).
+    effects: [EffectBar],
     drop-target: bool,
 }
 
@@ -315,21 +322,21 @@ component Clip inherits Rectangle {
         font-size: 11px;
         overflow: elide;
     }
-    if root.view.effect: Rectangle {
-        x: root.view.effect-x;
-        y: parent.height - 18px;
-        width: max(4px, root.view.effect-width);
-        height: 16px;
-        border-radius: 4px;
+    for bar in root.view.effects: Rectangle {
+        x: bar.x;
+        y: bar.y;
+        width: max(4px, bar.width);
+        height: bar.height;
+        border-radius: min(4px, bar.height / 2);
         border-width: 1px;
         border-color: #c084fccc;
         background: #7c3aede6;
-        HorizontalLayout {
+        if bar.height >= 12px: HorizontalLayout {
             padding-left: 6px;
             spacing: 4px;
             alignment: start;
             VerticalLayout { alignment: center; Icon { size: 12px; source: Icons.sparkles; colorize: #ffffff; } }
-            Text { text: root.view.effect-label; color: #ffffff; font-size: 11px; font-weight: 500; vertical-alignment: center; overflow: elide; }
+            Text { text: bar.label; color: #ffffff; font-size: 11px; font-weight: 500; vertical-alignment: center; overflow: elide; }
         }
     }
     // Selection and hover outline.

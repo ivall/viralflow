@@ -25,6 +25,12 @@ app (Slint UI, editor controller, export, settings)
   that share unchanged tracks and assets with their neighbours (`Arc`).
 - `engine/` resolves what is on screen at a moment (`resolve_scene`): transforms, keyframes,
   animations, effects and transitions. Preview and export both use it.
+- A clip carries a stack of effects (`ClipEffect`: kind, strength 0..1, optional time range);
+  `engine/effects.rs` turns each into an `EffectState` and adds them up. What the compositor
+  does beyond moving and recolouring a layer (pixel blocks, RGB split, lens, mirror, zoom blur,
+  light leak, vertical wipes, iris and clock masks) is a `LayerFx` (`engine/fx.rs`), produced
+  by effects and transitions alike. Documents from before effect stacks have one `effect`,
+  which `migrate.rs` moves into the stack.
 - `time.rs` has exact time helpers: frame indices at the project rate and stream time bases
   as fractions.
 
@@ -58,7 +64,10 @@ app (Slint UI, editor controller, export, settings)
 
 ## Captions and AI (`vf-ai`)
 
-- `whisper.rs` runs whisper.cpp through FFmpeg's `whisper` filter, in process.
+- `whisper.rs` runs whisper.cpp in process (whisper-rs; Metal on macOS) on the clip's sound at
+  16 kHz mono (`speech.rs`, decoded a second at a time). Word timings come from the token
+  timestamps of the same pass. Models download from a pinned Hugging Face commit, resume after an
+  interruption and are checked against their SHA-256 before they are used.
 - `transcript.rs` turns segments and word timings into caption cues; word-highlight captions
   are one clip per word (`vf_core::captions::highlight_cues`), timed by the transcript or
   estimated from the words' length.
@@ -71,6 +80,10 @@ app (Slint UI, editor controller, export, settings)
   player, timeline models), the 60 fps tick, autosave and every panel's bridge to Slint.
 - `ui/` holds the Slint files. Repeaters are fed persistent `VecModel`s updated in place
   (`models::sync_rows`) so pointer grabs survive updates.
+- `editor/cards.rs` draws the effect and transition cards: a small landscape through the real
+  scene engine and compositor, so a card shows exactly what the export will.
+- `logs.rs` writes each run's log to a file (the last ten are kept, each capped) and logs
+  panics with a backtrace; a panic on the main thread ends with a dialog naming the file.
 - `ui_tests.rs` drives the real UI headless (Slint's testing backend): clicks, drags,
   shortcuts, export to a file.
 

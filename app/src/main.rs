@@ -7,6 +7,7 @@ mod editor;
 mod export;
 mod format;
 mod home;
+mod logs;
 mod media;
 mod models;
 mod paths;
@@ -14,6 +15,7 @@ mod projects;
 mod secrets;
 mod settings;
 mod settings_page;
+mod system;
 mod tasks;
 mod toast;
 mod window;
@@ -34,10 +36,37 @@ pub fn shortcut_label(shortcut: &str) -> String {
 }
 
 fn main() {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info,wgpu_core=warn,wgpu_hal=warn,naga=warn")).init();
-    if let Err(error) = app::run() {
-        log::error!("{error}");
-        let _ = rfd::MessageDialog::new().set_level(rfd::MessageLevel::Error).set_title("ViralFlow could not start").set_description(error.to_string()).show();
-        std::process::exit(1);
+    let log_file = logs::init(paths::data_dir().ok().map(|dir| dir.join("logs")).as_deref());
+    let see_log = log_file
+        .map(|path| {
+            format!(
+                "
+
+Details are in the log:
+{}",
+                path.display()
+            )
+        })
+        .unwrap_or_default();
+    // The panic itself is already in the log (see `logs`); this tells the user.
+    match std::panic::catch_unwind(app::run) {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => {
+            log::error!("{error}");
+            let _ = rfd::MessageDialog::new()
+                .set_level(rfd::MessageLevel::Error)
+                .set_title("ViralFlow could not start")
+                .set_description(format!("{error}{see_log}"))
+                .show();
+            std::process::exit(1);
+        }
+        Err(_) => {
+            let _ = rfd::MessageDialog::new()
+                .set_level(rfd::MessageLevel::Error)
+                .set_title("ViralFlow stopped")
+                .set_description(format!("ViralFlow ran into an unexpected error and has to close. Changes made after the last save may be lost.{see_log}"))
+                .show();
+            std::process::exit(101);
+        }
     }
 }

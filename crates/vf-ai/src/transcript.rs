@@ -191,36 +191,6 @@ fn finalize(mut cues: Vec<CaptionCue>, duration: f64) -> Vec<CaptionCue> {
     result
 }
 
-/// Aligns token timings (which lost their spaces) to the words of the segment
-/// transcript. Returns None when the two transcripts disagree.
-pub fn align_tokens(segments: &[TimedSegment], tokens: &[TimedSegment]) -> Option<Vec<TimedWord>> {
-    let words: Vec<String> = segments.iter().flat_map(|s| clean(&s.text).split(' ').filter(|w| !w.is_empty()).map(String::from).collect::<Vec<_>>()).collect();
-    let mut token_chars: Vec<(char, f64, f64)> = Vec::new();
-    for token in tokens {
-        for c in token.text.chars().filter(|c| !c.is_whitespace()) {
-            token_chars.push((c, token.start, token.end));
-        }
-    }
-    let mut cursor = 0usize;
-    let mut result = Vec::with_capacity(words.len());
-    for word in words {
-        let mut start = None;
-        let mut end = 0.0f64;
-        for c in word.chars() {
-            let (token_char, token_start, token_end) = *token_chars.get(cursor)?;
-            if token_char != c {
-                return None;
-            }
-            start.get_or_insert(token_start);
-            end = end.max(token_end);
-            cursor += 1;
-        }
-        let start = start?;
-        result.push(TimedWord { word, start, end: end.max(start + 0.04) });
-    }
-    Some(result)
-}
-
 pub fn build_transcript(segments: Vec<TimedSegment>, words: Option<Vec<TimedWord>>, duration: f64, options: CaptionOptions) -> Transcript {
     let text = clean(&segments.iter().map(|s| s.text.as_str()).collect::<Vec<_>>().join(" "));
     if let Some(words) = words.filter(|w| !w.is_empty()) {
@@ -239,29 +209,6 @@ pub fn build_transcript(segments: Vec<TimedSegment>, words: Option<Vec<TimedWord
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn seg(text: &str, start: f64, end: f64) -> TimedSegment {
-        TimedSegment { text: text.into(), start, end }
-    }
-
-    #[test]
-    fn aligns_split_tokens_to_words() {
-        let segments = vec![seg("Jakie jest najlepszy?", 0.0, 2.0)];
-        let tokens = vec![
-            seg("Jak", 0.07, 0.16),
-            seg("ie", 0.16, 0.26),
-            seg("jest", 0.26, 0.47),
-            seg("najle", 0.47, 0.74),
-            seg("ps", 0.74, 0.84),
-            seg("zy", 0.84, 0.94),
-            seg("?", 0.94, 1.1),
-        ];
-        let words = align_tokens(&segments, &tokens).expect("aligned");
-        assert_eq!(words.len(), 3);
-        assert_eq!(words[0].word, "Jakie");
-        assert!((words[0].start - 0.07).abs() < 1e-9 && (words[0].end - 0.26).abs() < 1e-9);
-        assert!((words[2].end - 1.1).abs() < 1e-9);
-    }
 
     #[test]
     fn groups_words_into_short_cues() {

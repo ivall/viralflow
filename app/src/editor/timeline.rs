@@ -7,17 +7,17 @@ use std::time::Instant;
 
 use slint::{Color, ModelRc, SharedString, VecModel};
 use vf_core::edit::{Editor, TrimOrigin};
-use vf_core::engine::effects::{effect_window, EFFECTS, MIN_EFFECT};
+use vf_core::engine::effects::{effect_label, effect_window, MIN_EFFECT};
 use vf_core::engine::keyframes::sorted_keyframes;
 use vf_core::engine::math::clamp;
 use vf_core::engine::transitions::{track_seams, MAX_TRANSITION, MIN_TRANSITION};
-use vf_core::model::{EffectKind, EffectRange, ItemKind, TimelineItem, Track, TrackKind};
+use vf_core::model::{EffectRange, ItemKind, TimelineItem, Track, TrackKind};
 use vf_core::presets::TRACK_COLORS;
 use vf_core::timeline::Edge;
 
 use super::overview::Overviews;
 use crate::models::sync_rows;
-use crate::{format, ClipView, KeyMark, MenuEntry, SeamView, Tick, TimelineState, TrackRow};
+use crate::{format, ClipView, EffectBar, KeyMark, MenuEntry, SeamView, Tick, TimelineState, TrackRow};
 
 pub const PAD: f64 = 16.0;
 pub const RULER_H: f64 = 30.0;
@@ -43,7 +43,8 @@ pub enum Hit {
     Clip(String),
     Trim(String, Edge),
     Keyframe(String, String, f64),
-    Effect(String, EffectPart),
+    /// A clip's effect bar: (clip, effect, part).
+    Effect(String, String, EffectPart),
     Seam(String),
     SeamEdge(String, Edge),
 }
@@ -95,6 +96,7 @@ enum Drag {
     },
     Effect {
         item: String,
+        effect: String,
         part: EffectPart,
         origin: EffectRange,
         start_x: f64,
@@ -430,18 +432,21 @@ impl TimelineView {
                     }
                 }
             }
-            if has_effect(item) && local_y >= height - 18.0 {
-                let window = effect_window(item.duration, item.effect_range);
-                let ex0 = left + window.start * self.zoom;
-                let ex1 = left + (window.start + window.duration) * self.zoom;
+            for bar in effect_bars(item, height).iter().rev() {
+                if local_y < bar.top || local_y > bar.top + bar.height {
+                    continue;
+                }
+                let ex0 = left + bar.window.start * self.zoom;
+                let ex1 = left + (bar.window.start + bar.window.duration) * self.zoom;
                 if x >= ex0 && x <= ex1.max(ex0 + 4.0) {
-                    if editable && (x - ex0) <= 6.0 {
-                        return Hit::Effect(item.id.clone(), EffectPart::Start);
-                    }
-                    if editable && (ex1 - x) <= 6.0 {
-                        return Hit::Effect(item.id.clone(), EffectPart::End);
-                    }
-                    return Hit::Effect(item.id.clone(), EffectPart::Body);
+                    let part = if editable && (x - ex0) <= 6.0 {
+                        EffectPart::Start
+                    } else if editable && (ex1 - x) <= 6.0 {
+                        EffectPart::End
+                    } else {
+                        EffectPart::Body
+                    };
+                    return Hit::Effect(item.id.clone(), bar.id.clone(), part);
                 }
             }
             if editable && x - left <= TRIM_PX && right - left > TRIM_PX * 2.5 {
@@ -466,7 +471,7 @@ impl TimelineView {
                 }
             }
             Hit::Trim(..) | Hit::SeamEdge(..) | Hit::Keyframe(..) => 2,
-            Hit::Effect(_, EffectPart::Body) => 1,
+            Hit::Effect(_, _, EffectPart::Body) => 1,
             Hit::Effect(..) => 2,
             Hit::Seam(..) => 4,
             Hit::Empty => 0,
@@ -606,15 +611,16 @@ impl TimelineView {
                 self.drag = Some(Drag::Keyframe { item, keyframe, time, start_x: x, moved: false });
                 true
             }
-            Hit::Effect(id, part) => {
+            Hit::Effect(id, effect, part) => {
                 editor.select(Some(&id), false);
                 if editor.editable(&id).is_none() {
                     requests.push(Request::OpenPanel("effects"));
                     return true;
                 }
                 let Some(item) = editor.item(&id) else { return true };
-                let origin = effect_window(item.duration, item.effect_range);
-                self.drag = Some(Drag::Effect { item: id, part, origin, start_x: x, moved: false });
+                let Some(range) = item.effects.iter().find(|e| e.id == effect).map(|e| e.range) else { return true };
+                let origin = effect_window(item.duration, range);
+                self.drag = Some(Drag::Effect { item: id, effect, part, origin, start_x: x, moved: false });
                 true
             }
             Hit::Seam(to) => {
@@ -700,7 +706,7 @@ impl TimelineView {
                     Edge::Start => origin.start + dt,
                     Edge::End => origin.start + origin.duration + dt,
                 };
-                let (item, edge, origin) = (item.clone(), *edge, *origin);
+                let (item, edge, origin) = (item.clone(), *edge, origin.clone());
                 let exclude: HashSet<String> = [item.clone()].into_iter().collect();
                 let points = Self::snap_points(editor, &exclude);
                 let (value, line) = self.snap(raw, &points, shift);
@@ -745,7 +751,7 @@ impl TimelineView {
                 editor.select_many(&ids);
                 true
             }
-            Drag::Effect { item, part, origin, start_x, moved } => {
+            Drag::Effect { item, effect, part, origin, start_x, moved } => {
                 if !*moved {
                     if (x - *start_x).abs() < 3.0 {
                         return false;
@@ -754,7 +760,7 @@ impl TimelineView {
                     editor.begin_change();
                 }
                 let dt = (x - *start_x) / zoom;
-                let (item, part, origin) = (item.clone(), *part, *origin);
+                let (item, effect, part, origin) = (item.clone(), effect.clone(), *part, *origin);
                 let Some(clip) = editor.item(&item).cloned() else { return false };
                 let points: Vec<f64> =
                     Self::snap_points(editor, &HashSet::new()).into_iter().filter(|p| *p >= clip.start - 1e-6 && *p <= clip.end() + 1e-6).collect();
@@ -788,7 +794,7 @@ impl TimelineView {
                         duration = clamp(value - clip.start, origin.start + MIN_EFFECT, clip.duration) - origin.start;
                     }
                 }
-                editor.set_effect_range(&item, EffectRange { start, duration }, false);
+                editor.set_effect_range(&item, &effect, EffectRange { start, duration }, false);
                 true
             }
             Drag::Seam { item, edge, cut, limit, kind, moved } => {
@@ -1025,7 +1031,7 @@ impl TimelineView {
             Hit::Empty => {
                 vec![entry("paste", "Paste here", "Ctrl+V", editor.has_clipboard(), false), entry("select-all", "Select all", "Ctrl+A", true, false)]
             }
-            Hit::Clip(id) | Hit::Trim(id, _) | Hit::Keyframe(id, ..) | Hit::Effect(id, _) => {
+            Hit::Clip(id) | Hit::Trim(id, _) | Hit::Keyframe(id, ..) | Hit::Effect(id, ..) => {
                 if !editor.selection.contains(id) {
                     editor.select(Some(id), false);
                 }
@@ -1050,8 +1056,14 @@ impl TimelineView {
                 }
                 list.push(entry("hide", if item.hidden { "Show" } else { "Hide" }, "H", editable, false));
                 list.push(entry("lock", if item.locked { "Unlock" } else { "Lock" }, "", true, false));
-                if has_effect(&item) {
-                    list.push(entry("remove-effect", "Remove effect", "", editable, false));
+                if let Hit::Effect(_, effect, _) = &hit {
+                    if let Some(kind) = item.effects.iter().find(|e| &e.id == effect).map(|e| e.kind) {
+                        list.push(entry("remove-this-effect", &format!("Remove {}", effect_label(kind)), "", editable, false));
+                    }
+                }
+                let count = item.active_effects().count();
+                if count > 1 || (count == 1 && !matches!(hit, Hit::Effect(..))) {
+                    list.push(entry("remove-effect", if count > 1 { "Remove all effects" } else { "Remove effect" }, "", editable, false));
                 }
                 list.push(separator());
                 list.push(entry("delete", "Delete", "Del", editable, true));
@@ -1092,7 +1104,12 @@ impl TimelineView {
             "lock" => editor.toggle_item_flag(Flag::Locked),
             "remove-effect" => {
                 let ids = editor.selection.clone();
-                editor.set_effect(&ids, EffectKind::None, None);
+                editor.clear_effects(&ids);
+            }
+            "remove-this-effect" => {
+                if let Hit::Effect(item, effect, _) = &hit {
+                    editor.remove_effect(item, effect);
+                }
             }
             "delete" => editor.delete_selected(false),
             "ripple-delete" => editor.delete_selected(true),
@@ -1169,7 +1186,6 @@ impl TimelineView {
                 } else {
                     None
                 };
-                let window = effect_window(item.duration, item.effect_range);
                 let label = if item.kind == ItemKind::Text {
                     item.text.as_ref().map(|t| t.content.lines().next().unwrap_or("").to_string()).unwrap_or_default()
                 } else {
@@ -1202,10 +1218,19 @@ impl TimelineView {
                     picture: picture.unwrap_or_default(),
                     picture_x: from as f32,
                     picture_width: (to - from) as f32,
-                    effect: has_effect(item),
-                    effect_x: (window.start * self.zoom) as f32,
-                    effect_width: (window.duration * self.zoom) as f32,
-                    effect_label: EFFECTS.iter().find(|e| e.kind == item.effect()).map(|e| e.label).unwrap_or("Effect").into(),
+                    effects: ModelRc::new(VecModel::from(
+                        effect_bars(item, *height)
+                            .into_iter()
+                            .map(|bar| EffectBar {
+                                id: bar.id.into(),
+                                x: (bar.window.start * self.zoom) as f32,
+                                y: bar.top as f32,
+                                width: (bar.window.duration * self.zoom) as f32,
+                                height: bar.height as f32,
+                                label: bar.label.into(),
+                            })
+                            .collect::<Vec<_>>(),
+                    )),
                     drop_target: self.drop_clip.as_deref() == Some(item.id.as_str()),
                 });
                 if item.kind != ItemKind::Audio {
@@ -1346,8 +1371,49 @@ impl TimelineView {
     }
 }
 
-pub fn has_effect(item: &TimelineItem) -> bool {
-    item.effect() != EffectKind::None && !matches!(item.kind, ItemKind::Audio | ItemKind::Shape)
+/// Where an effect sits on its clip in the timeline.
+struct BarLayout {
+    id: String,
+    label: &'static str,
+    window: EffectRange,
+    /// Top and height inside the clip, in pixels.
+    top: f64,
+    height: f64,
+}
+
+/// A clip's effect bars, from the bottom of the clip up: effects that overlap
+/// in time get lanes of their own, effects one after another share one. Lanes
+/// that do not fit the clip are not drawn (the effects still apply).
+fn effect_bars(item: &TimelineItem, clip_height: f64) -> Vec<BarLayout> {
+    if !vf_core::edit::can_have_effects(item) {
+        return vec![];
+    }
+    let mut lanes: Vec<f64> = Vec::new();
+    let mut placed = Vec::new();
+    for effect in item.active_effects() {
+        let window = effect_window(item.duration, effect.range);
+        let lane = match lanes.iter().position(|end| *end <= window.start + 1e-6) {
+            Some(lane) => lane,
+            None => {
+                lanes.push(0.0);
+                lanes.len() - 1
+            }
+        };
+        lanes[lane] = window.start + window.duration;
+        placed.push((effect, window, lane));
+    }
+    let height = ((clip_height - 20.0) / lanes.len().max(1) as f64).clamp(6.0, 16.0);
+    placed
+        .into_iter()
+        .map(|(effect, window, lane)| BarLayout {
+            id: effect.id.clone(),
+            label: effect_label(effect.kind),
+            window,
+            top: clip_height - 2.0 - (lane as f64 + 1.0) * height - lane as f64,
+            height,
+        })
+        .filter(|bar| bar.top >= 0.0)
+        .collect()
 }
 
 /// Clip colour: the kind colour mixed into the panel colour (30% for media with pictures).

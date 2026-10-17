@@ -1,5 +1,5 @@
-//! Speech recognition for captions (whisper.cpp through libavfilter, in
-//! process) and turning what was said into timed caption cues.
+//! Speech recognition for captions (whisper.cpp, in process) and turning
+//! what was said into timed caption cues.
 
 pub mod openrouter;
 pub mod speech;

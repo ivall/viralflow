@@ -1,6 +1,6 @@
 [package]
 name = "vf-ai"
-description = "ViralFlow speech recognition (whisper.cpp through libavfilter) and caption timing"
+description = "ViralFlow speech recognition (whisper.cpp in process) and caption timing"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -14,3 +14,11 @@ serde_json.workspace = true
 log.workspace = true
 ureq = { version = "3", features = ["json"] }
 base64 = "0.22"
+sha2 = "0.10"
+# whisper.cpp, built from source by cmake. The CPU baseline it is compiled
+# for comes from the GGML_* variables in .cargo/config.toml.
+whisper-rs = { version = "0.16", features = ["log_backend", "raw-api"] }
+
+# On macOS the encoder runs on the GPU.
+[target.'cfg(target_os = "macos")'.dependencies]
+whisper-rs = { version = "0.16", features = ["log_backend", "raw-api", "metal"] }

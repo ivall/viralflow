@@ -5,9 +5,10 @@
 use super::animation::{motion_span, resolve_motion};
 use super::color::{adjust_matrix, is_identity, multiply, ColorMatrix, IDENTITY};
 use super::effects::{resolve_item_effect, EffectState};
+use super::fx::LayerFx;
 use super::keyframes::resolve_transform;
 use super::math::clamp;
-use super::transitions::{resolve_transition, track_connections, Connection, TransitionState};
+use super::transitions::{outgoing_on_top, resolve_transition, track_connections, Connection, TransitionState};
 use crate::model::{BlendMode, Crop, Fit, ItemKind, MediaAsset, Point, Project, ShapeKind, TimelineItem, TrackKind};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -138,6 +139,8 @@ pub struct Layer {
     pub grain: f64,
     pub scanlines: bool,
     pub glitch: Vec<f64>,
+    /// Sampling, light and masks from effects and transitions.
+    pub fx: LayerFx,
 }
 
 /// Size of text boxes in project pixels; text layout lives in the renderer.
@@ -200,7 +203,7 @@ pub fn build_layer(project: &Project, track: usize, index: usize, time: f64, tex
         cx: (transform.x + motion.dx + effect.dx + transition.dx) / 100.0 * w,
         cy: (transform.y + motion.dy + effect.dy + transition.dy) / 100.0 * h,
         scale: transform.scale * motion.scale * effect.scale * transition.scale,
-        rotation: transform.rotation + motion.rotation + transition.rotation,
+        rotation: transform.rotation + motion.rotation + effect.rotation + transition.rotation,
         flip_x: item.flip_x,
         flip_y: item.flip_y,
         opacity: clamp(transform.opacity * motion.opacity * transition.opacity, 0.0, 1.0),
@@ -208,12 +211,13 @@ pub fn build_layer(project: &Project, track: usize, index: usize, time: f64, tex
         blend: item.blend.unwrap_or_default(),
         radius: if item.kind == ItemKind::Shape { 0.0 } else { item.radius() },
         matrix: (!is_identity(&matrix)).then_some(matrix),
-        vignette: if visual { clamp(item.adjust.map(|a| a.vignette).unwrap_or(0.0), 0.0, 1.0) } else { 0.0 },
+        vignette: if visual { clamp(item.adjust.map(|a| a.vignette).unwrap_or(0.0).max(effect.vignette), 0.0, 1.0) } else { 0.0 },
         clip_left: transition.clip_left,
         clip_right: transition.clip_right.min(motion.reveal),
         grain: effect.grain,
         scanlines: effect.scanlines,
-        glitch: effect.glitch,
+        glitch: if transition.glitch.is_empty() { effect.glitch } else { transition.glitch },
+        fx: effect.fx.with(transition.fx),
     })
 }
 
@@ -233,7 +237,8 @@ pub fn resolve_scene(project: &Project, connections: &[Vec<Connection>], time: f
         let active = connections.get(track_index).and_then(|list| list.iter().find(|c| time >= c.start && time <= c.end));
         let mut entries: Vec<(usize, Option<&Connection>)> = Vec::new();
         if let Some(connection) = active {
-            for id in [&connection.from, &connection.to] {
+            let order = if outgoing_on_top(connection.kind) { [&connection.to, &connection.from] } else { [&connection.from, &connection.to] };
+            for id in order {
                 if let Some(position) = track.items.iter().position(|item| &item.id == id) {
                     entries.push((position, Some(connection)));
                 }

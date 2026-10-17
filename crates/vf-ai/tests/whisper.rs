@@ -12,18 +12,28 @@ fn transcribes_speech_in_process() {
         eprintln!("skipped: set VF_WHISPER_MODEL and VF_SPEECH");
         return;
     };
-    let work = std::env::temp_dir().join("vf-ai-whisper-test");
-    let request = Request { model: &PathBuf::from(model), source: &PathBuf::from(speech), offset: 0.0, duration: 9.0, language: "en", work_dir: &work };
-    let (segments, words) = transcribe(&request, &|pass, f| eprintln!("pass {pass}: {:.0}%", f * 100.0), &|| false).unwrap();
+    let request = Request { model: &PathBuf::from(model), source: &PathBuf::from(speech), offset: 0.0, duration: 9.0, language: "en" };
+    let (segments, words) = transcribe(&request, &|f| eprintln!("{:.0}%", f * 100.0), &|| false).unwrap();
     eprintln!("{segments:?}");
     let text: String = segments.iter().map(|s| s.text.to_lowercase()).collect::<Vec<_>>().join(" ");
     assert!(text.contains("test") && text.contains("captions"), "{text}");
     let words = words.expect("word timings");
+    eprintln!("{words:?}");
     assert!(words.len() >= 10, "{words:?}");
+    assert!(words.windows(2).all(|pair| pair[0].start <= pair[1].start), "words in order");
     let transcript = build_transcript(segments, Some(words), 9.0, CaptionOptions { max_words: 3 });
     eprintln!("{:?}", transcript.cues);
     assert_eq!(transcript.alignment, "word");
     assert!(transcript.cues.len() >= 4);
+}
+
+#[test]
+fn transcription_can_be_cancelled() {
+    let (Ok(model), Ok(speech)) = (std::env::var("VF_WHISPER_MODEL"), std::env::var("VF_SPEECH")) else { return };
+    let request = Request { model: &PathBuf::from(model), source: &PathBuf::from(speech), offset: 0.0, duration: 9.0, language: "en" };
+    let started = std::time::Instant::now();
+    let cancel_after_reading = || started.elapsed().as_millis() > 300;
+    assert!(transcribe(&request, &|_| {}, &cancel_after_reading).is_err());
 }
 
 #[test]

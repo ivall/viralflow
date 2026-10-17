@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use slint::{Color, ComponentHandle, Model, ModelRc, SharedString, VecModel};
 use vf_core::edit::{AnimationChoice, Editor, Flag, Slot, TransformPatch};
 use vf_core::engine::animation::{animation_windows, ANIMATIONS_IN, ANIMATIONS_OUT};
-use vf_core::engine::effects::EFFECTS;
+use vf_core::engine::effects::{effect_label, effect_preset};
 use vf_core::engine::keyframes::{keyframe_at, normalize_transform, resolve_transform};
 use vf_core::engine::transitions::{track_seams, MAX_TRANSITION, TRANSITIONS};
 use vf_core::model::*;
@@ -16,7 +16,8 @@ use vf_core::presets::{text_preset, ASPECT_PRESETS, TEXT_PRESETS};
 
 use super::EditorController;
 use crate::{
-    format, AdjustData, AnimationData, AudioData, Choice, FrameData, InspectorState, ItemInfo, ProjectData, ShapeData, SpeedData, Stat, TextData, TransformData,
+    format, AdjustData, AnimationData, AudioData, Choice, EffectRow, FrameData, InspectorState, ItemInfo, ProjectData, ShapeData, SpeedData, Stat, TextData,
+    TransformData,
 };
 
 /// Typing within this time of the last keystroke stays in one undo step.
@@ -74,7 +75,6 @@ impl EditorController {
         state.set_fonts(strings(self.text.families()));
         state.set_animations_in(choices(ANIMATIONS_IN.iter().map(|p| (p.kind.as_str(), p.label))));
         state.set_animations_out(choices(ANIMATIONS_OUT.iter().map(|p| (p.kind.as_str(), p.label))));
-        state.set_effects(choices(EFFECTS.iter().map(|p| (p.kind.as_str(), p.label))));
         state.set_transitions(choices(std::iter::once(("none", "None")).chain(TRANSITIONS.iter().map(|p| (p.kind.as_str(), p.label)))));
         // The style presets show what they look like, as in the text panel.
         let previews = super::assets::text_preset_previews(&self.text);
@@ -159,7 +159,16 @@ impl EditorController {
             }
             "preview-in" | "preview-out" => self.preview_animation(name == "preview-in"),
             "captions" => self.open_panel("captions"),
+            "open-effects" => self.open_panel("effects"),
             "rewrite" => self.rewrite_text(),
+            _ if name.starts_with("remove-effect:") => {
+                let effect = &name["remove-effect:".len()..];
+                self.edit(|e| {
+                    if let Some(id) = e.primary.clone() {
+                        e.remove_effect(&id, effect);
+                    }
+                });
+            }
             _ => {}
         }
     }
@@ -309,6 +318,10 @@ fn set_number(editor: &mut Editor, field: &str, value: f64) {
         "speed" => editor.set_speed(value, false),
         "anim-in.duration" => editor.set_animation_duration(Slot::In, value),
         "anim-out.duration" => editor.set_animation_duration(Slot::Out, value),
+        _ if field.starts_with("effect-amount:") => {
+            let Some(id) = editor.primary.clone() else { return };
+            editor.set_effect_amount(&id, &field["effect-amount:".len()..], value, false);
+        }
         "transition.duration" => {
             let Some(id) = editor.primary.clone() else { return };
             let kind = editor.item(&id).and_then(|item| item.transition).map(|t| t.kind).unwrap_or_default();
@@ -386,10 +399,6 @@ fn choose(editor: &mut Editor, field: &str, value: &str) {
             if let Some(kind) = AnimationOutKind::parse(value) {
                 editor.set_animation(AnimationChoice::Out(kind));
             }
-        }
-        "effect" => {
-            let ids = editor.selection.clone();
-            editor.set_effect(&ids, EffectKind::parse(value).unwrap_or_default(), None);
         }
         "transition" => {
             if let Some(id) = editor.primary.clone() {
@@ -659,6 +668,30 @@ pub(super) fn sync(editor: &Editor, state: &InspectorState, last: &mut Option<Sy
 
     if item.kind.is_visual() {
         sync_animation(editor, item, state);
+        sync_effects(item, state);
+    }
+}
+
+/// The clip's effects, row by row: a slider being dragged keeps its row.
+fn sync_effects(item: &TimelineItem, state: &InspectorState) {
+    let rows: Vec<EffectRow> = item
+        .active_effects()
+        .map(|effect| EffectRow {
+            id: effect.id.clone().into(),
+            label: effect_label(effect.kind).into(),
+            amount: (effect.amount() * 100.0) as f32,
+            adjustable: effect_preset(effect.kind).is_some_and(|p| p.adjustable),
+        })
+        .collect();
+    let model = state.get_clip_effects();
+    if model.row_count() != rows.len() || model.iter().zip(&rows).any(|(old, new)| old.id != new.id) {
+        state.set_clip_effects(ModelRc::new(VecModel::from(rows)));
+        return;
+    }
+    for (index, row) in rows.into_iter().enumerate() {
+        if model.row_data(index).as_ref() != Some(&row) {
+            model.set_row_data(index, row);
+        }
     }
 }
 
@@ -728,7 +761,6 @@ fn sync_animation(editor: &Editor, item: &TimelineItem, state: &InspectorState) 
         out_kind: windows.out_kind.as_str().into(),
         out_duration: anim_out.map(|a| a.duration).unwrap_or(0.0) as f32,
         max: span.duration as f32,
-        effect: item.effect().as_str().into(),
         has_seam,
         seam_kind: seam_kind.into(),
         seam_duration: seam_duration as f32,

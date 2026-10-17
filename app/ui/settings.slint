@@ -58,6 +58,7 @@ export global SettingsState {
     callback save-key(string);
     callback download(string);
     callback choose-folder();
+    callback open-logs();
     callback open-picker(bool);
     callback picker-changed();
     callback picker-filter(string, string);
@@ -270,7 +271,13 @@ export component SettingsView inherits Rectangle {
 
                 Group {
                     title: "Media engine";
-                    Row { title: SettingsState.engine; detail: SettingsState.engine-detail; last: true; Icon { source: Icons.circle-check; size: 16px; colorize: Theme.ok; } }
+                    Row { title: SettingsState.engine; detail: SettingsState.engine-detail; Icon { source: Icons.circle-check; size: 16px; colorize: Theme.ok; } }
+                    Row {
+                        title: "Logs";
+                        detail: "What the app did on each of its last runs. Attach the newest one to a bug report.";
+                        last: true;
+                        Button { text: "Open folder"; icon: Icons.folder-open; kind: ButtonKind.outline; size: ButtonSize.sm; clicked => { SettingsState.open-logs(); } }
+                    }
                 }
 
                 Group {

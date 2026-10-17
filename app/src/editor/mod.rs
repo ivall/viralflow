@@ -3,6 +3,7 @@
 mod assets;
 mod canvas;
 mod captions;
+mod cards;
 mod export_ui;
 mod inspector;
 mod overview;
@@ -90,6 +91,9 @@ pub struct EditorController {
     export_result: RefCell<String>,
     quit_after_export: RefCell<bool>,
     captions: RefCell<captions::Panel>,
+    /// Effect and transition cards (drawn on first use).
+    cards: RefCell<Option<cards::Cards>>,
+    cards_timer: slint::Timer,
     /// Called after the editor closed (the project list should refresh).
     pub on_closed: RefCell<Option<Box<dyn Fn()>>>,
 }
@@ -107,6 +111,8 @@ impl EditorController {
             export_result: RefCell::default(),
             quit_after_export: RefCell::default(),
             captions: RefCell::new(captions::Panel::new(&context.settings.get().caption_language)),
+            cards: RefCell::default(),
+            cards_timer: slint::Timer::default(),
             on_closed: RefCell::default(),
         });
         if let Some(window) = context.window() {
