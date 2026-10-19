@@ -159,6 +159,7 @@ impl EditorController {
             }
             "preview-in" | "preview-out" => self.preview_animation(name == "preview-in"),
             "captions" => self.open_panel("captions"),
+            "detach-audio" => self.edit(|e| e.detach_audio_selected()),
             "open-effects" => self.open_panel("effects"),
             "rewrite" => self.rewrite_text(),
             _ if name.starts_with("remove-effect:") => {
@@ -662,6 +663,7 @@ pub(super) fn sync(editor: &Editor, state: &InspectorState, last: &mut Option<Sy
             enhance: item.voice_enhance.unwrap_or(0.0) as f32,
             muted: item.muted,
             silent,
+            can_detach: editor.can_detach_audio(item),
         });
         state.set_speed(SpeedData { speed: item.speed() as f32, duration: format::duration(item.duration).into() });
     }

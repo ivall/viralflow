@@ -109,6 +109,7 @@ export struct AudioData {
     enhance: float,
     muted: bool,
     silent: bool,
+    can-detach: bool,
 }
 
 export struct SpeedData {
@@ -727,6 +728,14 @@ component AudioSection inherits Section {
         padding-top: 4px;
         Button { stretch: true; size: ButtonSize.sm; kind: InspectorState.audio.muted ? ButtonKind.primary : ButtonKind.outline; icon: Icons.volume-x; text: InspectorState.audio.muted ? "Muted" : "Mute"; clicked => { InspectorState.toggle("muted"); } }
         Button { stretch: true; size: ButtonSize.sm; kind: ButtonKind.outline; icon: Icons.captions; text: "Auto captions"; clicked => { InspectorState.action("captions"); } }
+    }
+    if InspectorState.audio.can-detach: Button {
+        size: ButtonSize.sm;
+        kind: ButtonKind.outline;
+        icon: Icons.unlink;
+        text: "Detach audio";
+        tooltip: "Move the sound to its own clip on an audio track";
+        clicked => { InspectorState.action("detach-audio"); }
     }
 }
 

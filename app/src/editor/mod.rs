@@ -246,6 +246,10 @@ impl EditorController {
             this.with(|s| s.timeline.scroll(dx as f64, dy as f64, control, shift, x as f64, &s.editor));
             this.sync_timeline();
         });
+        on!(on_hscroll, |this, pos, smooth| {
+            this.with(|s| s.timeline.scroll_to_fraction(pos as f64, smooth, &s.editor));
+            this.sync_timeline();
+        });
         on!(on_header_pointer, |this, phase, id, y| {
             let changed = this.with(|s| {
                 let before = s.editor.revision();

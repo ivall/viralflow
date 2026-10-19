@@ -12,7 +12,7 @@ use crate::engine::keyframes::{
     adjacent_keyframe, normalize_transform, patch_keyframe_at, retime_keyframes, set_keyframe_easing, sorted_keyframes, toggle_keyframe, trim_keyframes,
 };
 use crate::engine::math::{clamp, uid};
-use crate::engine::scene::content_end;
+use crate::engine::scene::{asset_has_audio, content_end};
 use crate::engine::transitions::{repair_transitions, transition_duration, DEFAULT_TRANSITION};
 use crate::model::*;
 use crate::presets::{create_track, item_name, media_item, preset_text_style, TextPreset};
@@ -1138,6 +1138,57 @@ impl Editor {
         self.touched();
     }
 
+    /// True for a video clip whose sound can move to a clip of its own: the
+    /// file has sound and the clip is not muted (which detaching leaves it).
+    pub fn can_detach_audio(&self, item: &TimelineItem) -> bool {
+        let asset = self.asset(item.asset_id.as_deref());
+        item.kind == ItemKind::Video && !item.muted && asset.is_some() && asset_has_audio(asset)
+    }
+
+    /// Moves the sound of the selected videos to audio clips under them, in
+    /// sync and with the same volume, fades, speed and voice cleanup (one undo
+    /// step). The videos are muted and the new audio clips selected.
+    pub fn detach_audio_selected(&mut self) {
+        let sources: Vec<TimelineItem> =
+            self.editable_selection().into_iter().map(|(t, i)| self.project.tracks[t].items[i].clone()).filter(|item| self.can_detach_audio(item)).collect();
+        if sources.is_empty() {
+            return;
+        }
+        self.snapshot();
+        let mut created = Vec::new();
+        let mut changed = HashSet::new();
+        for source in sources {
+            let id = uid(ItemKind::Audio.as_str());
+            // Audio tracks go to the bottom, so the indices of earlier tracks hold.
+            let (t, start) = self.place_on_track(ItemKind::Audio, &Span::new(id.clone(), source.start, source.duration), None, true);
+            let item = TimelineItem {
+                id: id.clone(),
+                track_id: self.project.tracks[t].id.clone(),
+                kind: ItemKind::Audio,
+                name: source.name.clone(),
+                start,
+                duration: source.duration,
+                asset_id: source.asset_id.clone(),
+                source_in: source.source_in,
+                speed: source.speed,
+                volume: source.volume,
+                fade_in: source.fade_in,
+                fade_out: source.fade_out,
+                voice_enhance: source.voice_enhance,
+                ..Default::default()
+            };
+            self.project.tracks[t].items.push(item);
+            changed.insert(t);
+            if let Some(video) = self.project.item_mut(&source.id) {
+                video.muted = true;
+            }
+            created.push(id);
+        }
+        self.repair_all(changed);
+        self.select_many(&created);
+        self.touched();
+    }
+
     pub fn toggle_item_flag(&mut self, flag: Flag) {
         let targets: Vec<String> =
             self.selected_items().into_iter().filter(|item| flag != Flag::Muted || item.kind.has_sound()).map(|item| item.id.clone()).collect();
@@ -1745,6 +1796,62 @@ mod tests {
         e.select(Some(&first), false);
         e.delete_selected(true);
         assert_eq!(e.item(&second).unwrap().start, 0.0);
+    }
+
+    fn add_video(e: &mut Editor, id: &str, has_audio: bool, start: f64) -> String {
+        let asset = MediaAsset {
+            id: id.into(),
+            kind: MediaKind::Video,
+            name: id.into(),
+            path: format!("{id}.mp4"),
+            duration: Some(4.0),
+            has_audio: Some(has_audio),
+            ..Default::default()
+        };
+        e.project.assets.push(asset.clone());
+        e.add_asset(&asset, Placement { start: Some(start), ..Default::default() }).unwrap()
+    }
+
+    #[test]
+    fn detaching_audio_moves_the_sound_to_an_audio_track() {
+        let mut e = editor();
+        let video = add_video(&mut e, "clip", true, 1.0);
+        e.update_selected(true, |item| {
+            item.source_in = Some(2.0);
+            item.volume = Some(0.5);
+            item.fade_in = Some(0.3);
+        });
+        e.select(Some(&video), false);
+        e.detach_audio_selected();
+        let audio = e.primary.clone().unwrap();
+        let (v, a) = (e.item(&video).unwrap().clone(), e.item(&audio).unwrap().clone());
+        assert!(v.muted);
+        assert_eq!(a.kind, ItemKind::Audio);
+        assert_eq!(e.project.tracks.iter().find(|t| t.id == a.track_id).unwrap().kind, TrackKind::Audio);
+        assert_eq!((a.start, a.duration, a.source_in, a.volume, a.fade_in), (v.start, v.duration, v.source_in, Some(0.5), Some(0.3)));
+        assert_eq!(a.asset_id.as_deref(), Some("clip"));
+        // Already detached (muted): nothing more to take.
+        e.select(Some(&video), false);
+        let before = e.revision();
+        e.detach_audio_selected();
+        assert_eq!(e.revision(), before);
+        // One undo step brings the sound back to the video.
+        e.undo();
+        assert!(!e.item(&video).unwrap().muted);
+        assert!(e.item(&audio).is_none());
+    }
+
+    #[test]
+    fn detaching_shares_an_audio_track_and_skips_silent_videos() {
+        let mut e = editor();
+        let first = add_video(&mut e, "a", true, 0.0);
+        let second = add_video(&mut e, "b", true, 4.0);
+        let silent = add_video(&mut e, "c", false, 8.0);
+        e.select_many(&[first, second, silent.clone()]);
+        e.detach_audio_selected();
+        assert_eq!(e.selection.len(), 2);
+        assert_eq!(e.project.tracks.iter().filter(|t| t.kind == TrackKind::Audio).count(), 1);
+        assert!(!e.item(&silent).unwrap().muted);
     }
 
     #[test]

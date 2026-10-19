@@ -5970,7 +5970,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vf-ai"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "base64 0.22.1",
  "log",
@@ -5985,7 +5985,7 @@ dependencies = [
 
 [[package]]
 name = "vf-audio"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "cpal",
  "log",
@@ -5996,7 +5996,7 @@ dependencies = [
 
 [[package]]
 name = "vf-core"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "chrono",
  "log",
@@ -6007,7 +6007,7 @@ dependencies = [
 
 [[package]]
 name = "vf-media"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "ffmpeg-next",
  "log",
@@ -6016,7 +6016,7 @@ dependencies = [
 
 [[package]]
 name = "vf-render"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "cosmic-text",
  "log",
@@ -6030,7 +6030,7 @@ dependencies = [
 
 [[package]]
 name = "viralflow"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "chrono",
  "dirs",

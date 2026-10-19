@@ -348,6 +348,31 @@ impl TimelineView {
         self.scroll_target = Some((tx.clamp(0.0, max_x), ty.clamp(0.0, max_y)));
     }
 
+    /// The horizontal scrollbar: where the thumb sits along its free track
+    /// (0..1), the share of the timeline in view, and the playhead's share.
+    fn hscroll_thumb(&self, editor: &Editor) -> (f64, f64, f64) {
+        let content = self.content_width(editor);
+        let (max_x, _) = self.scroll_limits(editor);
+        let pos = if max_x > 0.0 { self.scroll_x / max_x } else { 0.0 };
+        (pos, (self.width / content).min(1.0), ((PAD + editor.time * self.zoom) / content).clamp(0.0, 1.0))
+    }
+
+    /// Scrollbar input: `pos` is 0..1 along the scroll range. Thumb drags follow
+    /// the pointer exactly; clicks on the track glide there.
+    pub fn scroll_to_fraction(&mut self, pos: f64, smooth: bool, editor: &Editor) {
+        let (max_x, _) = self.scroll_limits(editor);
+        let x = clamp(pos, 0.0, 1.0) * max_x;
+        self.zoom_target = None;
+        if smooth {
+            let y = self.scroll_target.map_or(self.scroll_y, |(_, y)| y);
+            self.scroll_target = Some((x, y));
+        } else {
+            self.scroll_target = None;
+            self.scroll_x = x;
+            self.clamp_scroll(editor);
+        }
+    }
+
     /// Moves smooth scrolling and zooming one step; true while something moved.
     pub fn animate(&mut self, editor: &Editor) -> bool {
         let now = Instant::now();
@@ -1054,6 +1079,9 @@ impl TimelineView {
                 if item.kind.has_sound() {
                     list.push(entry("mute", if item.muted { "Unmute" } else { "Mute" }, "", editable, false));
                 }
+                if editor.selected_items().into_iter().any(|i| editor.can_detach_audio(i)) {
+                    list.push(entry("detach-audio", "Detach audio", "", editable, false));
+                }
                 list.push(entry("hide", if item.hidden { "Show" } else { "Hide" }, "H", editable, false));
                 list.push(entry("lock", if item.locked { "Unlock" } else { "Lock" }, "", true, false));
                 if let Hit::Effect(_, effect, _) = &hit {
@@ -1100,6 +1128,7 @@ impl TimelineView {
             "group" => editor.group_selected(),
             "ungroup" => editor.ungroup_selected(),
             "mute" => editor.toggle_item_flag(Flag::Muted),
+            "detach-audio" => editor.detach_audio_selected(),
             "hide" => editor.toggle_item_flag(Flag::Hidden),
             "lock" => editor.toggle_item_flag(Flag::Locked),
             "remove-effect" => {
@@ -1327,6 +1356,10 @@ impl TimelineView {
         state.set_track_drop_line(self.track_drop_line(tracks).map(|v| v as f32).unwrap_or(-100.0));
         state.set_snapping(self.snapping);
         state.set_zoom_log(self.zoom.ln() as f32);
+        let (pos, size, playhead) = self.hscroll_thumb(editor);
+        state.set_hscroll_pos(pos as f32);
+        state.set_hscroll_size(size as f32);
+        state.set_hscroll_playhead(playhead as f32);
         state.set_has_selection(!editor.selection.is_empty());
         state.set_has_primary(editor.primary.is_some());
         state.set_primary_visual(editor.selected_item().is_some_and(|i| i.kind != ItemKind::Audio));
@@ -1476,6 +1509,27 @@ mod tests {
         settle(&mut view, &editor);
         assert!(view.zoom > 20.0);
         assert!((view.time_at(anchor) - time).abs() < 0.05, "{} vs {}", view.time_at(anchor), time);
+    }
+
+    #[test]
+    fn scrollbar_maps_the_thumb_to_the_scroll_range() {
+        let editor = editor();
+        let mut view = TimelineView::new(true);
+        view.set_size(800.0, 300.0, &editor);
+        view.set_zoom(20.0, Some(0.0), &editor);
+        let (max_x, _) = view.scroll_limits(&editor);
+        view.scroll_to_fraction(0.5, false, &editor);
+        assert!((view.scroll_x - max_x / 2.0).abs() < 1e-6);
+        let (pos, size, _) = view.hscroll_thumb(&editor);
+        assert!((pos - 0.5).abs() < 1e-6);
+        assert!(size > 0.0 && size < 1.0);
+        view.scroll_to_fraction(2.0, false, &editor);
+        assert_eq!(view.scroll_x, max_x);
+        // Track clicks glide.
+        view.scroll_to_fraction(0.0, true, &editor);
+        assert_eq!(view.scroll_x, max_x);
+        settle(&mut view, &editor);
+        assert_eq!(view.scroll_x, 0.0);
     }
 
     #[test]

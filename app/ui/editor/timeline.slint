@@ -97,6 +97,11 @@ export global TimelineState {
     in property <length> track-drop-line: -100px;
     in property <bool> snapping;
     in property <float> zoom-log;
+    // Horizontal scrollbar: thumb position along its free track (0..1),
+    // visible share of the timeline, and the playhead's share.
+    in property <float> hscroll-pos;
+    in property <float> hscroll-size: 1;
+    in property <float> hscroll-playhead;
     in property <bool> has-selection;
     in property <bool> has-primary;
     in property <bool> primary-visual;
@@ -115,6 +120,7 @@ export global TimelineState {
     callback lanes-context(length, length);
     callback ruler-pointer(PointerPhase, length, bool);
     callback scroll(length, length, bool, bool, length);
+    callback hscroll(float, bool);
     callback header-pointer(PointerPhase, string, length);
     callback track-toggle(string, string);
     callback track-action(string, string);
@@ -357,6 +363,66 @@ component Clip inherits Rectangle {
     }
 }
 
+// Horizontal scrollbar under the lanes. Drag the thumb, click the track to
+// glide there, or wheel over it to scroll sideways.
+component HScrollbar inherits Rectangle {
+    property <length> inset: 6px;
+    property <length> track-width: max(1px, self.width - self.inset * 2);
+    property <length> thumb-width: min(self.track-width, max(40px, self.track-width * TimelineState.hscroll-size));
+    property <length> free: max(1px, self.track-width - self.thumb-width);
+    property <length> thumb-x: self.inset + TimelineState.hscroll-pos * self.free;
+    // Where the pointer grabbed the thumb; negative when not dragging.
+    property <length> grab: -1px;
+    property <bool> dragging: touch.pressed && self.grab >= 0;
+    property <bool> over-thumb: touch.has-hover && touch.mouse-x >= self.thumb-x && touch.mouse-x <= self.thumb-x + self.thumb-width;
+    property <bool> scrollable: TimelineState.hscroll-size < 0.999;
+    height: 14px;
+    background: Theme.panel;
+
+    Rectangle { y: 0; height: 1px; background: Theme.line; }
+    Rectangle {
+        x: root.inset + TimelineState.hscroll-playhead * root.track-width - 1px;
+        width: 2px;
+        height: 6px;
+        y: (parent.height - self.height) / 2;
+        border-radius: 1px;
+        background: Theme.accent.with-alpha(0.8);
+    }
+    Rectangle {
+        x: root.thumb-x;
+        width: root.thumb-width;
+        height: root.dragging || touch.has-hover ? 8px : 5px;
+        y: (parent.height - self.height) / 2;
+        border-radius: self.height / 2;
+        opacity: root.scrollable ? 1 : 0.4;
+        background: root.dragging ? Theme.muted : root.over-thumb ? Theme.faint : Theme.line-strong.brighter(0.25);
+        animate height, background { duration: Theme.fast; }
+    }
+    touch := TouchArea {
+        pointer-event(event) => {
+            if event.button == PointerEventButton.left && event.kind == PointerEventKind.down && root.scrollable {
+                if self.mouse-x >= root.thumb-x && self.mouse-x <= root.thumb-x + root.thumb-width {
+                    root.grab = self.mouse-x - root.thumb-x;
+                } else {
+                    // Center the thumb on the click and keep dragging from there.
+                    root.grab = root.thumb-width / 2;
+                    TimelineState.hscroll((self.mouse-x - root.inset - root.grab) / root.free, true);
+                }
+            }
+            if event.button == PointerEventButton.left && event.kind == PointerEventKind.up {
+                root.grab = -1px;
+            }
+        }
+        moved => {
+            if root.dragging { TimelineState.hscroll((self.mouse-x - root.inset - root.grab) / root.free, false); }
+        }
+        scroll-event(event) => {
+            TimelineState.scroll(event.delta-x, event.delta-y, false, true, self.mouse-x);
+            accept
+        }
+    }
+}
+
 export component Timeline inherits Surface {
     property <[MenuEntry]> add-track-entries: [
         { id: "video", label: "Video track", enabled: true },
@@ -446,185 +512,194 @@ export component Timeline inherits Surface {
                             background: Theme.accent;
                         }
                     }
+                    // Matches the scrollbar under the lanes.
+                    Rectangle {
+                        height: 14px;
+                        Rectangle { y: 0; height: 1px; background: Theme.line; }
+                    }
                 }
                 Rectangle { x: parent.width - 1px; width: 1px; background: Theme.line; }
             }
 
-            // Lanes
-            lanes := Rectangle {
+            VerticalLayout {
                 horizontal-stretch: 1;
-                clip: true;
-                changed width => { TimelineState.lanes-size(self.width, self.height); }
-                changed height => { TimelineState.lanes-size(self.width, self.height); }
-                init => { TimelineState.lanes-size(self.width, self.height); }
-
-                // Ruler
-                Rectangle {
-                    y: 0;
-                    height: 30px;
-                    background: Theme.panel;
-                    for tick in TimelineState.ticks: Rectangle {
-                        x: tick.x;
-                        width: 1px;
-                        y: parent.height - self.height;
-                        height: tick.major ? 10px : 6px;
-                        background: tick.major ? Theme.line-strong : Theme.line;
-                    }
-                    for tick in TimelineState.ticks: Text {
-                        visible: tick.major;
-                        x: tick.x + 4px;
-                        y: 4px;
-                        text: tick.label;
-                        color: Theme.faint;
-                        font-size: 11px;
-                    }
-                    Rectangle { y: parent.height - 1px; height: 1px; background: Theme.line; }
-                    ruler-touch := TouchArea {
-                        mouse-cursor: ew-resize;
-                        pointer-event(event) => {
-                            if event.button == PointerEventButton.left {
-                                if event.kind == PointerEventKind.down { TimelineState.ruler-pointer(PointerPhase.down, self.mouse-x, event.modifiers.shift); }
-                                if event.kind == PointerEventKind.up { TimelineState.ruler-pointer(PointerPhase.up, self.mouse-x, event.modifiers.shift); }
-                            }
-                        }
-                        moved => {
-                            if self.pressed { TimelineState.ruler-pointer(PointerPhase.move, self.mouse-x, false); }
-                        }
-                        scroll-event(event) => {
-                            TimelineState.scroll(event.delta-x, event.delta-y, event.modifiers.control, event.modifiers.shift, self.mouse-x);
-                            accept
-                        }
-                    }
-                }
-
-                area := Rectangle {
-                    y: 30px;
-                    height: parent.height - 30px;
+                // Lanes
+                lanes := Rectangle {
+                    vertical-stretch: 1;
                     clip: true;
-                    for row in TimelineState.rows: Rectangle {
-                        y: row.top;
-                        height: row.height;
-                        border-radius: 2px;
-                        background: row.drop-hint ? Theme.accent.with-alpha(0.06) : Theme.app.with-alpha(0.4);
-                        opacity: row.dragging ? 0.5 : 1;
-                    }
-                    for item in TimelineState.clips: Clip { view: item; }
-                    for mark in TimelineState.keyframes: Rectangle {
-                        x: mark.x - 4px;
-                        y: mark.y - 4px;
-                        width: 8px;
-                        height: 8px;
-                        transform-rotation: 45deg;
-                        border-width: 1px;
-                        border-color: #00000099;
-                        background: mark.active ? Theme.accent : #ffffffd9;
-                    }
-                    for seam in TimelineState.seams: Rectangle {
-                        x: seam.x;
-                        y: seam.y;
-                        width: seam.width;
-                        height: seam.height;
-                        border-radius: 4px;
-                        border-width: 1px;
-                        border-color: seam.has ? (seam.active ? #ffffff : Theme.accent.with-alpha(0.7)) : (TimelineState.transition-drag ? Theme.accent : Theme.line-strong);
-                        background: seam.has ? (seam.active ? Theme.accent.with-alpha(0.7) : #1c2a45e6) : Theme.panel;
-                        opacity: seam.has || TimelineState.transition-drag ? 1 : 0.85;
-                        HorizontalLayout {
-                            alignment: center;
-                            spacing: 4px;
-                            VerticalLayout { alignment: center; Icon { size: 12px; source: seam.has ? Icons.blend : Icons.plus; colorize: seam.has ? #ffffff : Theme.muted; } }
-                            if seam.has && seam.label != "": Text { text: seam.label; color: #ffffff; font-size: 10px; font-weight: 500; vertical-alignment: center; }
-                        }
-                    }
-                    if TimelineState.marquee-width > 0: Rectangle {
-                        x: TimelineState.marquee-x;
-                        y: TimelineState.marquee-y;
-                        width: TimelineState.marquee-width;
-                        height: TimelineState.marquee-height;
-                        border-width: 1px;
-                        border-color: Theme.accent;
-                        background: Theme.accent.with-alpha(0.1);
-                    }
-                    if TimelineState.drop-x >= 0px && !TimelineState.drop-line: Rectangle {
-                        x: TimelineState.drop-x;
-                        y: TimelineState.drop-y;
-                        width: max(6px, TimelineState.drop-width);
-                        height: TimelineState.drop-height;
-                        border-radius: 5px;
-                        border-width: 2px;
-                        border-color: Theme.accent;
-                        background: Theme.accent.with-alpha(0.15);
-                    }
-                    if TimelineState.drop-x >= 0px && TimelineState.drop-line: Rectangle {
-                        x: TimelineState.drop-x;
-                        y: TimelineState.drop-y - 1px;
-                        width: max(40px, TimelineState.drop-width);
-                        height: 2px;
-                        border-radius: 1px;
-                        background: Theme.accent;
-                    }
-                    if TimelineState.track-drop-line > -50px: Rectangle {
-                        y: TimelineState.track-drop-line - 1px;
-                        height: 2px;
-                        background: Theme.accent;
-                    }
-                    if TimelineState.rows.length == 0: Text {
-                        text: "Drag media here or use the panels on the left";
-                        color: Theme.faint;
-                        font-size: Theme.text-xs;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
-                    }
-                    DropProbe { target: "timeline"; }
-                    area-touch := TouchArea {
-                        mouse-cursor: TimelineState.cursor == 1 ? MouseCursor.grab : TimelineState.cursor == 2 ? MouseCursor.ew-resize : TimelineState.cursor == 3 ? MouseCursor.not-allowed : TimelineState.cursor == 4 ? MouseCursor.pointer : MouseCursor.default;
-                        pointer-event(event) => {
-                            if event.button == PointerEventButton.left {
-                                if event.kind == PointerEventKind.down { EditorState.focus-request += 1; TimelineState.lanes-pointer(PointerPhase.down, self.mouse-x, self.mouse-y, event.modifiers.shift, event.modifiers.control || event.modifiers.meta, event.modifiers.alt); }
-                                if event.kind == PointerEventKind.up { TimelineState.lanes-pointer(PointerPhase.up, self.mouse-x, self.mouse-y, event.modifiers.shift, event.modifiers.control || event.modifiers.meta, event.modifiers.alt); }
-                            }
-                            if event.button == PointerEventButton.right && event.kind == PointerEventKind.down {
-                                TimelineState.lanes-context(self.mouse-x, self.mouse-y);
-                                context-menu.open(self.mouse-x, self.mouse-y + 30px);
-                            }
-                            if event.kind == PointerEventKind.move && !self.pressed {
-                                TimelineState.lanes-hover(self.mouse-x, self.mouse-y);
-                            }
-                        }
-                        moved => {
-                            if self.pressed { TimelineState.lanes-pointer(PointerPhase.move, self.mouse-x, self.mouse-y, false, false, false); }
-                        }
-                        double-clicked => { TimelineState.lanes-pointer(PointerPhase.double, self.mouse-x, self.mouse-y, false, false, false); }
-                        scroll-event(event) => {
-                            TimelineState.scroll(event.delta-x, event.delta-y, event.modifiers.control || event.modifiers.meta, event.modifiers.shift, self.mouse-x);
-                            accept
-                        }
-                    }
-                }
-
-                if TimelineState.snap-line > -50px: Rectangle {
-                    x: TimelineState.snap-line;
-                    width: 1px;
-                    background: #f472b6;
-                }
-                if TimelineState.playhead > -50px: Rectangle {
-                    x: TimelineState.playhead;
-                    width: 1px;
-                    background: Theme.accent;
+                    changed width => { TimelineState.lanes-size(self.width, self.height); }
+                    changed height => { TimelineState.lanes-size(self.width, self.height); }
+                    init => { TimelineState.lanes-size(self.width, self.height); }
+    
+                    // Ruler
                     Rectangle {
-                        x: -5px;
                         y: 0;
-                        width: 11px;
-                        height: 12px;
-                        border-radius: 3px;
+                        height: 30px;
+                        background: Theme.panel;
+                        for tick in TimelineState.ticks: Rectangle {
+                            x: tick.x;
+                            width: 1px;
+                            y: parent.height - self.height;
+                            height: tick.major ? 10px : 6px;
+                            background: tick.major ? Theme.line-strong : Theme.line;
+                        }
+                        for tick in TimelineState.ticks: Text {
+                            visible: tick.major;
+                            x: tick.x + 4px;
+                            y: 4px;
+                            text: tick.label;
+                            color: Theme.faint;
+                            font-size: 11px;
+                        }
+                        Rectangle { y: parent.height - 1px; height: 1px; background: Theme.line; }
+                        ruler-touch := TouchArea {
+                            mouse-cursor: ew-resize;
+                            pointer-event(event) => {
+                                if event.button == PointerEventButton.left {
+                                    if event.kind == PointerEventKind.down { TimelineState.ruler-pointer(PointerPhase.down, self.mouse-x, event.modifiers.shift); }
+                                    if event.kind == PointerEventKind.up { TimelineState.ruler-pointer(PointerPhase.up, self.mouse-x, event.modifiers.shift); }
+                                }
+                            }
+                            moved => {
+                                if self.pressed { TimelineState.ruler-pointer(PointerPhase.move, self.mouse-x, false); }
+                            }
+                            scroll-event(event) => {
+                                TimelineState.scroll(event.delta-x, event.delta-y, event.modifiers.control, event.modifiers.shift, self.mouse-x);
+                                accept
+                            }
+                        }
+                    }
+    
+                    area := Rectangle {
+                        y: 30px;
+                        height: parent.height - 30px;
+                        clip: true;
+                        for row in TimelineState.rows: Rectangle {
+                            y: row.top;
+                            height: row.height;
+                            border-radius: 2px;
+                            background: row.drop-hint ? Theme.accent.with-alpha(0.06) : Theme.app.with-alpha(0.4);
+                            opacity: row.dragging ? 0.5 : 1;
+                        }
+                        for item in TimelineState.clips: Clip { view: item; }
+                        for mark in TimelineState.keyframes: Rectangle {
+                            x: mark.x - 4px;
+                            y: mark.y - 4px;
+                            width: 8px;
+                            height: 8px;
+                            transform-rotation: 45deg;
+                            border-width: 1px;
+                            border-color: #00000099;
+                            background: mark.active ? Theme.accent : #ffffffd9;
+                        }
+                        for seam in TimelineState.seams: Rectangle {
+                            x: seam.x;
+                            y: seam.y;
+                            width: seam.width;
+                            height: seam.height;
+                            border-radius: 4px;
+                            border-width: 1px;
+                            border-color: seam.has ? (seam.active ? #ffffff : Theme.accent.with-alpha(0.7)) : (TimelineState.transition-drag ? Theme.accent : Theme.line-strong);
+                            background: seam.has ? (seam.active ? Theme.accent.with-alpha(0.7) : #1c2a45e6) : Theme.panel;
+                            opacity: seam.has || TimelineState.transition-drag ? 1 : 0.85;
+                            HorizontalLayout {
+                                alignment: center;
+                                spacing: 4px;
+                                VerticalLayout { alignment: center; Icon { size: 12px; source: seam.has ? Icons.blend : Icons.plus; colorize: seam.has ? #ffffff : Theme.muted; } }
+                                if seam.has && seam.label != "": Text { text: seam.label; color: #ffffff; font-size: 10px; font-weight: 500; vertical-alignment: center; }
+                            }
+                        }
+                        if TimelineState.marquee-width > 0: Rectangle {
+                            x: TimelineState.marquee-x;
+                            y: TimelineState.marquee-y;
+                            width: TimelineState.marquee-width;
+                            height: TimelineState.marquee-height;
+                            border-width: 1px;
+                            border-color: Theme.accent;
+                            background: Theme.accent.with-alpha(0.1);
+                        }
+                        if TimelineState.drop-x >= 0px && !TimelineState.drop-line: Rectangle {
+                            x: TimelineState.drop-x;
+                            y: TimelineState.drop-y;
+                            width: max(6px, TimelineState.drop-width);
+                            height: TimelineState.drop-height;
+                            border-radius: 5px;
+                            border-width: 2px;
+                            border-color: Theme.accent;
+                            background: Theme.accent.with-alpha(0.15);
+                        }
+                        if TimelineState.drop-x >= 0px && TimelineState.drop-line: Rectangle {
+                            x: TimelineState.drop-x;
+                            y: TimelineState.drop-y - 1px;
+                            width: max(40px, TimelineState.drop-width);
+                            height: 2px;
+                            border-radius: 1px;
+                            background: Theme.accent;
+                        }
+                        if TimelineState.track-drop-line > -50px: Rectangle {
+                            y: TimelineState.track-drop-line - 1px;
+                            height: 2px;
+                            background: Theme.accent;
+                        }
+                        if TimelineState.rows.length == 0: Text {
+                            text: "Drag media here or use the panels on the left";
+                            color: Theme.faint;
+                            font-size: Theme.text-xs;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        DropProbe { target: "timeline"; }
+                        area-touch := TouchArea {
+                            mouse-cursor: TimelineState.cursor == 1 ? MouseCursor.grab : TimelineState.cursor == 2 ? MouseCursor.ew-resize : TimelineState.cursor == 3 ? MouseCursor.not-allowed : TimelineState.cursor == 4 ? MouseCursor.pointer : MouseCursor.default;
+                            pointer-event(event) => {
+                                if event.button == PointerEventButton.left {
+                                    if event.kind == PointerEventKind.down { EditorState.focus-request += 1; TimelineState.lanes-pointer(PointerPhase.down, self.mouse-x, self.mouse-y, event.modifiers.shift, event.modifiers.control || event.modifiers.meta, event.modifiers.alt); }
+                                    if event.kind == PointerEventKind.up { TimelineState.lanes-pointer(PointerPhase.up, self.mouse-x, self.mouse-y, event.modifiers.shift, event.modifiers.control || event.modifiers.meta, event.modifiers.alt); }
+                                }
+                                if event.button == PointerEventButton.right && event.kind == PointerEventKind.down {
+                                    TimelineState.lanes-context(self.mouse-x, self.mouse-y);
+                                    context-menu.open(self.mouse-x, self.mouse-y + 30px);
+                                }
+                                if event.kind == PointerEventKind.move && !self.pressed {
+                                    TimelineState.lanes-hover(self.mouse-x, self.mouse-y);
+                                }
+                            }
+                            moved => {
+                                if self.pressed { TimelineState.lanes-pointer(PointerPhase.move, self.mouse-x, self.mouse-y, false, false, false); }
+                            }
+                            double-clicked => { TimelineState.lanes-pointer(PointerPhase.double, self.mouse-x, self.mouse-y, false, false, false); }
+                            scroll-event(event) => {
+                                TimelineState.scroll(event.delta-x, event.delta-y, event.modifiers.control || event.modifiers.meta, event.modifiers.shift, self.mouse-x);
+                                accept
+                            }
+                        }
+                    }
+    
+                    if TimelineState.snap-line > -50px: Rectangle {
+                        x: TimelineState.snap-line;
+                        width: 1px;
+                        background: #f472b6;
+                    }
+                    if TimelineState.playhead > -50px: Rectangle {
+                        x: TimelineState.playhead;
+                        width: 1px;
                         background: Theme.accent;
+                        Rectangle {
+                            x: -5px;
+                            y: 0;
+                            width: 11px;
+                            height: 12px;
+                            border-radius: 3px;
+                            background: Theme.accent;
+                        }
+                    }
+                    context-menu := Menu {
+                        menu-width: 210px;
+                        entries: TimelineState.context-entries;
+                        activated(id) => { TimelineState.context-action(id); }
                     }
                 }
-                context-menu := Menu {
-                    menu-width: 210px;
-                    entries: TimelineState.context-entries;
-                    activated(id) => { TimelineState.context-action(id); }
-                }
+                HScrollbar { }
             }
         }
     }
