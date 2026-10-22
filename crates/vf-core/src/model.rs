@@ -88,6 +88,7 @@ string_enum!(TransitionKind {
     Iris = "iris", Clock = "clock", Pixelate = "pixelate", Glitch = "glitch", RgbSplit = "rgb-split",
     LightLeak = "light-leak"
 } default None = "none");
+string_enum!(BeatFocus { All = "all" } default Bass = "bass");
 string_enum!(ShapeKind { Circle = "circle", Line = "line", Blur = "blur" } default Rect = "rect");
 string_enum!(HighlightMode { Color = "color", Box = "box" } default None = "none");
 string_enum!(TextAlign { Left = "left", Right = "right" } default Center = "center");
@@ -331,6 +332,36 @@ pub struct EffectRange {
     pub duration: f64,
 }
 
+/// How beats are picked from the music.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BeatOptions {
+    /// What the beats follow: the kick and bass, or every hit (snares, claps, hats too).
+    pub focus: BeatFocus,
+    /// 0..1: only the strongest hits .. every hit that stands out.
+    pub amount: f64,
+}
+
+impl Default for BeatOptions {
+    fn default() -> Self {
+        BeatOptions { focus: BeatFocus::Bass, amount: 0.5 }
+    }
+}
+
+impl BeatOptions {
+    pub fn amount(&self) -> f64 {
+        if self.amount.is_finite() {
+            self.amount.clamp(0.0, 1.0)
+        } else {
+            0.5
+        }
+    }
+
+    fn is_default(&self) -> bool {
+        *self == BeatOptions::default()
+    }
+}
+
 /// Strength of an effect nobody has adjusted: the look each effect was designed with.
 pub const DEFAULT_EFFECT_AMOUNT: f64 = 0.5;
 
@@ -346,13 +377,17 @@ pub struct ClipEffect {
     /// Part of the clip the effect covers, relative to the clip start. Whole clip when absent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub range: Option<EffectRange>,
+    /// Fires on every n-th beat of the music (`Project::beats`) instead of
+    /// running across its range; absent = not synced.
+    #[serde(rename = "onBeat", skip_serializing_if = "Option::is_none")]
+    pub on_beat: Option<u32>,
     #[serde(flatten, skip_serializing_if = "serde_json::Map::is_empty")]
     pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl Default for ClipEffect {
     fn default() -> Self {
-        ClipEffect { id: String::new(), kind: EffectKind::None, amount: DEFAULT_EFFECT_AMOUNT, range: None, extra: Default::default() }
+        ClipEffect { id: String::new(), kind: EffectKind::None, amount: DEFAULT_EFFECT_AMOUNT, range: None, on_beat: None, extra: Default::default() }
     }
 }
 
@@ -599,6 +634,12 @@ pub struct Project {
     pub tracks: Vec<Track>,
     pub assets: Vec<MediaAsset>,
     pub export: ExportSettings,
+    /// Beats of the music in timeline seconds, ascending (found by `vf_audio::beats`).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub beats: Vec<f64>,
+    /// How `beats` were picked (kept for picking them again).
+    #[serde(skip_serializing_if = "BeatOptions::is_default")]
+    pub beat_options: BeatOptions,
     /// Free-form origin info, e.g. which generator produced the draft.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub origin: Option<String>,
@@ -622,6 +663,8 @@ impl Default for Project {
             tracks: vec![],
             assets: vec![],
             export: ExportSettings::default(),
+            beats: vec![],
+            beat_options: BeatOptions::default(),
             origin: None,
             extra: serde_json::Map::new(),
         }
@@ -649,6 +692,14 @@ impl Project {
 
     pub fn item_mut(&mut self, id: &str) -> Option<&mut TimelineItem> {
         self.locate(id).map(|(t, i)| &mut self.tracks[t].items[i])
+    }
+
+    /// Stores beats ascending and without invalid times (effects search them).
+    pub fn set_beats(&mut self, mut beats: Vec<f64>) {
+        beats.retain(|beat| beat.is_finite() && *beat >= 0.0);
+        beats.sort_by(f64::total_cmp);
+        beats.dedup();
+        self.beats = beats;
     }
 }
 

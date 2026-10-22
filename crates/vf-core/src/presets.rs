@@ -60,6 +60,8 @@ pub fn create_project(name: &str, width: u32, height: u32, fps: u32) -> Project 
         tracks: vec![],
         assets: vec![],
         export: ExportSettings { fps, resolution: width.min(height), ..Default::default() },
+        beats: vec![],
+        beat_options: Default::default(),
         origin: None,
         extra: Default::default(),
     }

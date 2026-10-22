@@ -186,6 +186,8 @@ impl Snapshot {
             tracks: Vec::new(),
             assets: Vec::new(),
             export: project.export.clone(),
+            beats: project.beats.clone(),
+            beat_options: project.beat_options,
             origin: project.origin.clone(),
             extra: project.extra.clone(),
         };
@@ -1504,6 +1506,40 @@ impl Editor {
         self.touched();
     }
 
+    /// Fires the effect of `kind` on each clip on every `every`-th beat of the
+    /// music, or (`None`) across its range again. `beats` replaces the
+    /// project's beats in the same undo step.
+    pub fn set_effect_on_beat(&mut self, ids: &[String], kind: EffectKind, every: Option<u32>, beats: Option<Vec<f64>>) {
+        let targets: Vec<_> =
+            self.effect_targets(ids).into_iter().filter(|&(t, i)| self.project.tracks[t].items[i].effects.iter().any(|e| e.kind == kind)).collect();
+        if targets.is_empty() {
+            return;
+        }
+        self.snapshot();
+        if let Some(beats) = beats {
+            self.project.set_beats(beats);
+        }
+        for target in targets {
+            for effect in self.at(target).effects.iter_mut().filter(|e| e.kind == kind) {
+                effect.on_beat = every.map(|n| n.clamp(1, 16));
+            }
+        }
+        self.touched();
+    }
+
+    /// Replaces the music's beats and how they were picked; `None` keeps the
+    /// beats (they are picked once the music has been analysed).
+    pub fn set_beats(&mut self, beats: Option<Vec<f64>>, options: BeatOptions, record: bool) {
+        if record {
+            self.snapshot();
+        }
+        if let Some(beats) = beats {
+            self.project.set_beats(beats);
+        }
+        self.project.beat_options = options;
+        self.touched();
+    }
+
     // ------------------------------------------------------------ tracks
 
     pub fn add_track(&mut self, kind: TrackKind) {
@@ -1773,6 +1809,42 @@ mod tests {
         let tail = items[1].effects[1].range.unwrap();
         assert!((tail.start - 0.2).abs() < 1e-9 && (tail.duration - 0.5).abs() < 1e-9, "{tail:?}");
         assert_ne!(items[0].effects[0].id, items[1].effects[0].id, "each half has its own effect");
+    }
+
+    #[test]
+    fn effects_sync_to_the_beat_across_the_selection() {
+        let mut e = editor();
+        let first = add_text(&mut e, 0.0);
+        let second = add_text(&mut e, 4.0);
+        let ids = vec![first.clone(), second.clone()];
+        e.add_effect(&ids, EffectKind::Flash, None);
+        e.add_effect(std::slice::from_ref(&first), EffectKind::Mono, None);
+        e.set_effect_on_beat(&ids, EffectKind::Flash, Some(2), Some(vec![1.0, f64::NAN, 0.5, 0.5]));
+        assert_eq!(e.project.beats, [0.5, 1.0]);
+        for id in &ids {
+            let flash = e.item(id).unwrap().effects.iter().find(|x| x.kind == EffectKind::Flash).unwrap();
+            assert_eq!(flash.on_beat, Some(2));
+        }
+        assert_eq!(e.item(&first).unwrap().effects[1].on_beat, None, "other effects keep running");
+        // Beats and sync are one step.
+        assert!(e.undo());
+        assert!(e.project.beats.is_empty());
+        assert_eq!(e.item(&first).unwrap().effects[0].on_beat, None);
+        assert!(e.redo());
+        e.set_effect_on_beat(&ids, EffectKind::Flash, None, None);
+        assert_eq!(e.item(&second).unwrap().effects[0].on_beat, None);
+        assert_eq!(e.project.beats, [0.5, 1.0]);
+    }
+
+    #[test]
+    fn retuned_beats_are_one_undo_step() {
+        let mut e = editor();
+        e.set_beats(Some(vec![1.0, 2.0]), BeatOptions::default(), true);
+        e.set_beats(Some(vec![1.0, 1.5, 2.0]), BeatOptions { focus: BeatFocus::All, amount: 0.8 }, true);
+        assert_eq!(e.project.beat_options.focus, BeatFocus::All);
+        assert!(e.undo());
+        assert_eq!(e.project.beats, [1.0, 2.0]);
+        assert_eq!(e.project.beat_options, BeatOptions::default());
     }
 
     #[test]

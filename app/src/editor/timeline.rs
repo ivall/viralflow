@@ -507,6 +507,8 @@ impl TimelineView {
 
     fn snap_points(editor: &Editor, exclude: &HashSet<String>) -> Vec<f64> {
         let mut points = vec![0.0, editor.time];
+        // Cuts land on the music's beats.
+        points.extend_from_slice(&editor.project.beats);
         for item in editor.project.items() {
             if !exclude.contains(&item.id) {
                 points.push(item.start);
@@ -1398,7 +1400,13 @@ impl TimelineView {
             } else {
                 format::time(time, None)
             };
-            ticks.push(Tick { x: self.x(time) as f32, major: is_major, label: label.into() });
+            ticks.push(Tick { x: self.x(time) as f32, major: is_major, label: label.into(), beat: false });
+        }
+        let beats = &editor.project.beats;
+        let visible = &beats[beats.partition_point(|b| *b < start)..beats.partition_point(|b| *b <= end)];
+        // Beats closer than 4 px would only smear together.
+        if self.zoom * visible.windows(2).map(|w| w[1] - w[0]).fold(f64::MAX, f64::min) >= 4.0 || visible.len() < 2 {
+            ticks.extend(visible.iter().take(600).map(|beat| Tick { x: self.x(*beat) as f32, major: false, label: "".into(), beat: true }));
         }
         ticks
     }

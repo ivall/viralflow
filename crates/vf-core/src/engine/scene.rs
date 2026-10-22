@@ -178,7 +178,7 @@ pub fn build_layer(project: &Project, track: usize, index: usize, time: f64, tex
         (super::animation::IDLE_MOTION, EffectState::default(), TransitionState::default())
     } else {
         let span = motion_span(index, siblings);
-        let effect = if item.kind == ItemKind::Shape { EffectState::default() } else { resolve_item_effect(item, elapsed) };
+        let effect = if item.kind == ItemKind::Shape { EffectState::default() } else { resolve_item_effect(item, elapsed, &project.beats) };
         (resolve_motion(&span, time - span.start), effect, resolve_transition(options.connection, &item.id, time))
     };
 

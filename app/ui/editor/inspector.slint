@@ -1,5 +1,5 @@
 import { Theme, Icons } from "../theme.slint";
-import { Button, ButtonKind, ButtonSize, Surface, Section, SectionHeader, Field, Slider, Segmented, Choice, Select, NumberField, TextArea, TextField, Icon, Switch, ScrollView } from "../widgets.slint";
+import { Button, ButtonKind, ButtonSize, Surface, Section, SectionHeader, Field, Slider, Segmented, Choice, Select, NumberField, TextArea, TextField, Icon, Switch, ScrollView, Spinner } from "../widgets.slint";
 import { ColorField, FontPicker } from "../pickers.slint";
 
 export struct ItemInfo {
@@ -136,6 +136,8 @@ export struct EffectRow {
     /// Strength in %.
     amount: float,
     adjustable: bool,
+    /// Fires on every n-th beat of the music; 0 = runs across its range.
+    on-beat: int,
 }
 
 export struct Stat {
@@ -168,6 +170,12 @@ export global InspectorState {
     in property <[Choice]> animations-in;
     in property <[Choice]> animations-out;
     in property <[EffectRow]> clip-effects;
+    /// Beats found in the project's music.
+    in property <int> beat-count;
+    in property <bool> finding-beats;
+    /// How the beats are picked: "bass" or "all", and the amount in %.
+    in property <string> beat-focus;
+    in property <float> beat-amount;
     in property <[Choice]> transitions;
     in property <[Choice]> text-presets;
     in property <[Choice]> aspects;
@@ -834,6 +842,77 @@ component AnimationSection inherits VerticalLayout {
                 Button { icon: Icons.x; tooltip: "Remove " + effect.label; kind: ButtonKind.ghost; size: ButtonSize.sm; clicked => { InspectorState.action("remove-effect:" + effect.id); } }
             }
             if effect.adjustable: Percent { label: "Strength"; field: "effect-amount:" + effect.id; minimum: 0; maximum: 100; step: 1; value: effect.amount; }
+            Field {
+                label: "On beat";
+                HorizontalLayout {
+                    spacing: 8px;
+                    VerticalLayout {
+                        alignment: center;
+                        Switch {
+                            checked: effect.on-beat > 0;
+                            enabled: !InspectorState.finding-beats;
+                            toggled(on) => { InspectorState.action((on ? "beat-on:" : "beat-off:") + effect.id); }
+                        }
+                    }
+                    if InspectorState.finding-beats: VerticalLayout { alignment: center; Spinner { size: 14px; } }
+                    Text {
+                        horizontal-stretch: 1;
+                        text: InspectorState.finding-beats ? "Finding beats…" : effect.on-beat > 0 ? "Fires with the music" : "";
+                        color: Theme.faint;
+                        font-size: Theme.text-2xs;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                }
+            }
+            if effect.on-beat > 0: Field {
+                label: "Every";
+                Segmented {
+                    horizontal-stretch: 1;
+                    current: effect.on-beat;
+                    options: [{ value: "1", label: "Beat" }, { value: "2", label: "2nd" }, { value: "4", label: "4th" }];
+                    selected(value) => { InspectorState.choose("beat-every:" + effect.id, value); }
+                }
+            }
+        }
+    }
+    if InspectorState.item.kind != 4 && InspectorState.beat-count > 0: Section {
+        SectionHeader {
+            title: "Beats";
+            Button {
+                text: "Find again";
+                icon: Icons.refresh;
+                tooltip: "Analyse the music again after changing it";
+                kind: ButtonKind.ghost;
+                size: ButtonSize.sm;
+                enabled: !InspectorState.finding-beats;
+                clicked => { InspectorState.action("beats-again"); }
+            }
+        }
+        Field {
+            label: "Follow";
+            Segmented {
+                horizontal-stretch: 1;
+                current: InspectorState.beat-focus;
+                options: [{ value: "bass", label: "Bass" }, { value: "all", label: "All hits" }];
+                selected(value) => { InspectorState.action("beat-focus:" + value); }
+            }
+        }
+        Slider {
+            label: "Amount";
+            minimum: 0;
+            maximum: 100;
+            step: 1;
+            value: InspectorState.beat-amount;
+            display: InspectorState.beat-amount < 34 ? "Fewer" : InspectorState.beat-amount > 66 ? "More" : "Normal";
+            started => { InspectorState.begin(); }
+            changed(v) => { InspectorState.number("beat-amount", v / 100); }
+        }
+        Text {
+            text: InspectorState.beat-count + " beats. Bass follows the kick and 808; All hits adds snares and claps.";
+            color: Theme.faint;
+            font-size: Theme.text-2xs;
+            wrap: word-wrap;
         }
     }
     if InspectorState.animation.has-seam: Section {

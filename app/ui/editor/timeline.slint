@@ -74,6 +74,8 @@ export struct Tick {
     x: length,
     major: bool,
     label: string,
+    /// A beat of the music rather than a time mark.
+    beat: bool,
 }
 
 export global TimelineState {
@@ -537,11 +539,12 @@ export component Timeline inherits Surface {
                         height: 30px;
                         background: Theme.panel;
                         for tick in TimelineState.ticks: Rectangle {
-                            x: tick.x;
-                            width: 1px;
-                            y: parent.height - self.height;
-                            height: tick.major ? 10px : 6px;
-                            background: tick.major ? Theme.line-strong : Theme.line;
+                            x: tick.beat ? tick.x - 1px : tick.x;
+                            width: tick.beat ? 2px : 1px;
+                            y: tick.beat ? 0 : parent.height - self.height;
+                            height: tick.beat ? 5px : tick.major ? 10px : 6px;
+                            border-radius: tick.beat ? 1px : 0;
+                            background: tick.beat ? Theme.accent : tick.major ? Theme.line-strong : Theme.line;
                         }
                         for tick in TimelineState.ticks: Text {
                             visible: tick.major;

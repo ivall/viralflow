@@ -150,6 +150,8 @@ pub fn migrate_project(input: &Value) -> Project {
         }
     }
     project.export = sanitize_export(project.export.clone(), source.get("export"), project.fps, width, height);
+    let beats = std::mem::take(&mut project.beats);
+    project.set_beats(beats);
     project
 }
 
@@ -344,6 +346,8 @@ pub fn convert_legacy_project(source: &Map<String, Value>) -> Project {
         tracks,
         assets: vec![],
         export: ExportSettings { fps, resolution: width.min(height), format, ..Default::default() },
+        beats: vec![],
+        beat_options: Default::default(),
         origin: Some("ViralFlow 1.x".into()),
         extra: Map::new(),
     };

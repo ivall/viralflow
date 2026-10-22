@@ -4,6 +4,7 @@
 //! When the output device changes (headphones plugged in or pulled out, a new
 //! default device, another sample rate), the stream is rebuilt for it.
 
+pub mod beats;
 pub mod loudness;
 pub mod mixdown;
 mod mixer;

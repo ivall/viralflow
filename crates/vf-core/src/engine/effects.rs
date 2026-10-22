@@ -234,27 +234,71 @@ pub fn effect_window(duration: f64, range: Option<EffectRange>) -> EffectRange {
 }
 
 /// One effect of a clip `elapsed` seconds after the clip's start. A ranged
-/// effect is idle outside its window, except where the window touches a clip edge.
-pub fn resolve_clip_effect(effect: &ClipEffect, item_duration: f64, elapsed: f64) -> EffectState {
+/// effect is idle outside its window, except where the window touches a clip
+/// edge. A beat-synced one fires on the `beats` (timeline seconds) inside it.
+pub fn resolve_clip_effect(effect: &ClipEffect, item: &TimelineItem, elapsed: f64, beats: &[f64]) -> EffectState {
     if effect.kind == EffectKind::None {
         return EffectState::default();
     }
-    if effect.range.is_none() {
-        return resolve_effect(effect.kind, elapsed, item_duration, effect.amount());
+    if effect.range.is_none() && effect.on_beat.is_none() {
+        return resolve_effect(effect.kind, elapsed, item.duration, effect.amount());
     }
-    let window = effect_window(item_duration, effect.range);
+    let window = effect_window(item.duration, effect.range);
     let local = elapsed - window.start;
     let touches_start = window.start <= 1e-6;
-    let touches_end = window.start + window.duration >= item_duration - 1e-6;
+    let touches_end = window.start + window.duration >= item.duration - 1e-6;
     if (local < 0.0 && !touches_start) || (local > window.duration && !touches_end) {
         return EffectState::default();
     }
-    resolve_effect(effect.kind, local, window.duration, effect.amount())
+    match effect.on_beat {
+        Some(every) => resolve_on_beat(effect.kind, effect.amount(), beats, every, item.start + elapsed),
+        None => resolve_effect(effect.kind, local, window.duration, effect.amount()),
+    }
+}
+
+/// How long an effect that does not settle by itself stays on after a beat.
+pub const BEAT_HIT: f64 = 0.2;
+/// Longest a beat's hit runs (after the last beat, across a break).
+const BEAT_SPAN: f64 = 1.0;
+
+/// Effects that hit and settle by themselves: on a beat they run up to the next one.
+fn settles(kind: EffectKind) -> bool {
+    matches!(kind, EffectKind::Punch | EffectKind::Shake | EffectKind::Flash | EffectKind::Pulse | EffectKind::ZoomIn | EffectKind::ZoomOut)
+}
+
+/// An effect fired by every `every`-th beat at timeline `time`: hits settle
+/// until the next beat, looks blink for `BEAT_HIT`.
+fn resolve_on_beat(kind: EffectKind, amount: f64, beats: &[f64], every: u32, time: f64) -> EffectState {
+    let every = every.max(1) as usize;
+    let passed = beats.partition_point(|beat| *beat <= time);
+    if passed == 0 {
+        return EffectState::default();
+    }
+    // Counted from the song's first beat, so every clip keeps the same phase.
+    let index = (passed - 1) / every * every;
+    let beat = beats[index];
+    let gap = beats.get(index + every).map_or(BEAT_SPAN, |next| next - beat).clamp(0.01, BEAT_SPAN);
+    let local = time - beat;
+    if settles(kind) {
+        return if local <= gap { resolve_effect(kind, local, gap, amount) } else { EffectState::default() };
+    }
+    let hit = BEAT_HIT.min(gap);
+    if local > hit {
+        return EffectState::default();
+    }
+    // Moving looks show another moment on each beat (other bands, another hue).
+    let moment = if kind == EffectKind::Glitch { glitching_slot(index as i64 * 8) as f64 / 8.0 } else { index as f64 };
+    resolve_effect(kind, moment + local, hit, amount)
+}
+
+/// First glitch slot from `from` that displaces (most of them rest).
+fn glitching_slot(from: i64) -> i64 {
+    (from..from + 64).find(|slot| hash01(*slot) > 0.6).unwrap_or(from)
 }
 
 /// All of a clip's effects `elapsed` seconds after its start, in stack order.
-pub fn resolve_item_effect(item: &TimelineItem, elapsed: f64) -> EffectState {
-    item.active_effects().fold(EffectState::default(), |state, effect| state.with(resolve_clip_effect(effect, item.duration, elapsed)))
+pub fn resolve_item_effect(item: &TimelineItem, elapsed: f64, beats: &[f64]) -> EffectState {
+    item.active_effects().fold(EffectState::default(), |state, effect| state.with(resolve_clip_effect(effect, item, elapsed, beats)))
 }
 
 /// Whether an effect still moves (time matters) or is a fixed look.
@@ -317,24 +361,71 @@ mod tests {
             ],
             ..Default::default()
         };
-        let early = resolve_item_effect(&item, 0.5);
+        let early = resolve_item_effect(&item, 0.5, &[]);
         assert_eq!(early.blur, 0.0, "blur waits for its window");
         assert!(early.scale > 1.0);
-        let middle = resolve_item_effect(&item, 1.5);
+        let middle = resolve_item_effect(&item, 1.5, &[]);
         assert_eq!(middle.blur, 10.0);
         // Black & white drains the saturation: equal weights per row.
         assert!((middle.matrix[0] - middle.matrix[1] * (0.213 / 0.715)).abs() < 0.05);
     }
 
+    fn clip(start: f64, duration: f64) -> TimelineItem {
+        TimelineItem { kind: ItemKind::Video, start, duration, ..Default::default() }
+    }
+
     #[test]
     fn a_ranged_effect_is_idle_outside_its_window() {
+        let item = clip(0.0, 4.0);
         let effect = ClipEffect { kind: EffectKind::Blur, range: Some(EffectRange { start: 1.0, duration: 1.0 }), ..Default::default() };
-        assert_eq!(resolve_clip_effect(&effect, 4.0, 0.5).blur, 0.0);
-        assert_eq!(resolve_clip_effect(&effect, 4.0, 1.5).blur, 10.0);
-        assert_eq!(resolve_clip_effect(&effect, 4.0, 2.5).blur, 0.0);
+        assert_eq!(resolve_clip_effect(&effect, &item, 0.5, &[]).blur, 0.0);
+        assert_eq!(resolve_clip_effect(&effect, &item, 1.5, &[]).blur, 10.0);
+        assert_eq!(resolve_clip_effect(&effect, &item, 2.5, &[]).blur, 0.0);
         // A window that reaches the end of the clip stays on to the end.
         let tail = ClipEffect { range: Some(EffectRange { start: 3.0, duration: 1.0 }), ..effect };
-        assert_eq!(resolve_clip_effect(&tail, 4.0, 4.0).blur, 10.0);
+        assert_eq!(resolve_clip_effect(&tail, &item, 4.0, &[]).blur, 10.0);
+    }
+
+    #[test]
+    fn a_look_on_the_beat_blinks_on_each_beat() {
+        // The clip starts at 10 s; beats are timeline times.
+        let item = clip(10.0, 4.0);
+        let beats = [10.5, 11.0, 11.5, 12.0];
+        let effect = ClipEffect { kind: EffectKind::Negative, on_beat: Some(1), ..Default::default() };
+        let at = |elapsed: f64| resolve_clip_effect(&effect, &item, elapsed, &beats).matrix != IDENTITY;
+        assert!(!at(0.2), "idle before the first beat");
+        assert!(at(0.55) && at(1.05) && at(2.1));
+        assert!(!at(0.8) && !at(1.3), "idle between beats");
+        let every_other = ClipEffect { on_beat: Some(2), ..effect.clone() };
+        let at = |elapsed: f64| resolve_clip_effect(&every_other, &item, elapsed, &beats).matrix != IDENTITY;
+        assert!(at(0.55) && !at(1.05) && at(1.55));
+        // Without beats a synced effect has nothing to fire on.
+        assert_eq!(resolve_clip_effect(&effect, &item, 0.55, &[]), EffectState::default());
+    }
+
+    #[test]
+    fn a_hit_on_the_beat_settles_until_the_next_one() {
+        let item = clip(0.0, 4.0);
+        let beats = [1.0, 2.0];
+        let effect = ClipEffect { kind: EffectKind::Flash, on_beat: Some(1), ..Default::default() };
+        let flash = |elapsed: f64| resolve_clip_effect(&effect, &item, elapsed, &beats).matrix;
+        assert_eq!(flash(0.9), IDENTITY);
+        assert_eq!(flash(1.0), flash(2.0), "every beat starts the flash afresh");
+        assert_ne!(flash(1.0), IDENTITY);
+        // Its range limits where it fires.
+        let ranged = ClipEffect { range: Some(EffectRange { start: 1.5, duration: 1.0 }), ..effect };
+        assert_eq!(resolve_clip_effect(&ranged, &item, 1.0, &beats).matrix, IDENTITY);
+        assert_ne!(resolve_clip_effect(&ranged, &item, 2.0, &beats).matrix, IDENTITY);
+    }
+
+    #[test]
+    fn a_glitch_on_the_beat_always_glitches() {
+        let item = clip(0.0, 20.0);
+        let beats: Vec<f64> = (0..30).map(|i| i as f64 * 0.5).collect();
+        let effect = ClipEffect { kind: EffectKind::Glitch, on_beat: Some(1), ..Default::default() };
+        for beat in &beats {
+            assert!(!resolve_clip_effect(&effect, &item, beat + 0.01, &beats).glitch.is_empty(), "beat at {beat}");
+        }
     }
 
     #[test]

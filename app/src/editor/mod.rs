@@ -71,6 +71,8 @@ struct Session {
     /// Assets whose files are missing.
     offline: std::collections::HashSet<String>,
     assets_key: assets::ListKey,
+    /// The music analysed for beats (picking them again with other options is instant).
+    beat_analysis: Option<Arc<vf_audio::beats::Analysis>>,
 }
 
 impl Session {
@@ -401,6 +403,7 @@ impl EditorController {
                     drag: None,
                     offline: Default::default(),
                     assets_key: Default::default(),
+                    beat_analysis: None,
                 });
                 state.set_loading(false);
                 self.check_media();

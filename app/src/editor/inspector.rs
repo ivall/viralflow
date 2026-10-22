@@ -3,6 +3,7 @@
 //! ("transform.x", "text.color", ...) so the Slint side stays declarative.
 
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use slint::{Color, ComponentHandle, Model, ModelRc, SharedString, VecModel};
@@ -49,7 +50,11 @@ impl EditorController {
         on!(on_begin, |this| {
             this.with(|s| s.editor.begin_change());
         });
-        on!(on_number, |this, field, value| this.edit(|e| set_number(e, &field, value as f64)));
+        on!(on_number, |this, field, value| if field == "beat-amount" {
+            this.tune_beats(None, Some(value as f64), false)
+        } else {
+            this.edit(|e| set_number(e, &field, value as f64))
+        });
         on!(on_commit, |this, field, value| this.edit(|e| {
             e.begin_change();
             set_number(e, &field, value as f64)
@@ -162,6 +167,20 @@ impl EditorController {
             "detach-audio" => self.edit(|e| e.detach_audio_selected()),
             "open-effects" => self.open_panel("effects"),
             "rewrite" => self.rewrite_text(),
+            "beats-again" => {
+                self.with(|s| s.beat_analysis = None);
+                self.find_beats(None);
+            }
+            _ if name.starts_with("beat-focus:") => self.tune_beats(BeatFocus::parse(&name["beat-focus:".len()..]), None, true),
+            _ if name.starts_with("beat-on:") => self.find_beats(Some(name["beat-on:".len()..].to_string())),
+            _ if name.starts_with("beat-off:") => {
+                let effect = &name["beat-off:".len()..];
+                self.edit(|e| {
+                    if let Some(kind) = primary_effect_kind(e, effect) {
+                        e.set_effect_on_beat(&visual_selection(e), kind, None, None);
+                    }
+                });
+            }
             _ if name.starts_with("remove-effect:") => {
                 let effect = &name["remove-effect:".len()..];
                 self.edit(|e| {
@@ -241,6 +260,96 @@ impl EditorController {
         );
     }
 
+    /// Fires an effect of the selected clips on the music's beats, finding
+    /// them first when the project has none; with no effect, analyses the
+    /// music again (it changed) and picks its beats.
+    fn find_beats(self: &Rc<Self>, effect: Option<String>) {
+        let Some(Some((ids, kind, known))) = self.with(|s| {
+            let kind = match &effect {
+                Some(effect) => Some(primary_effect_kind(&s.editor, effect)?),
+                None => None,
+            };
+            Some((visual_selection(&s.editor), kind, !s.editor.project.beats.is_empty()))
+        }) else {
+            return;
+        };
+        match kind {
+            // Beats are there (maybe tuned): keep them.
+            Some(kind) if known => self.edit(|e| e.set_effect_on_beat(&ids, kind, Some(1), None)),
+            _ => self.analyse_music(move |this, analysis| {
+                let options = this.with(|s| s.editor.project.beat_options).unwrap_or_default();
+                let beats = analysis.beats(&options);
+                if beats.is_empty() {
+                    this.context.toasts.error("No beats found", "Add music to the timeline first; effects fire on its beats.");
+                    return;
+                }
+                let count = beats.len();
+                this.edit(|e| match kind {
+                    Some(kind) => e.set_effect_on_beat(&ids, kind, Some(1), Some(beats)),
+                    None => e.set_beats(Some(beats), options, true),
+                });
+                if kind.is_none() {
+                    this.context.toasts.success("Beats found", &format!("{count} beats in the music."));
+                }
+            }),
+        }
+    }
+
+    /// Picks the beats again with other options: at once from the analysed
+    /// music, or once it has been analysed. `record`: its own undo step.
+    fn tune_beats(self: &Rc<Self>, focus: Option<BeatFocus>, amount: Option<f64>, record: bool) {
+        let Some((mut options, analysis)) = self.with(|s| (s.editor.project.beat_options, s.beat_analysis.clone())) else { return };
+        if let Some(focus) = focus {
+            options.focus = focus;
+        }
+        if let Some(amount) = amount {
+            options.amount = amount.clamp(0.0, 1.0);
+        }
+        self.edit(|e| e.set_beats(analysis.as_ref().map(|a| a.beats(&options)), options, record));
+        if analysis.is_none() {
+            self.analyse_music(|this, analysis| {
+                let options = this.with(|s| s.editor.project.beat_options).unwrap_or_default();
+                // Part of the change that asked for it.
+                this.edit(|e| e.set_beats(Some(analysis.beats(&options)), options, false));
+            });
+        }
+    }
+
+    /// Analyses the project's music in the background (kept for tuning) and
+    /// hands the result to `done`.
+    fn analyse_music(self: &Rc<Self>, done: impl FnOnce(&Rc<Self>, &vf_audio::beats::Analysis) + 'static) {
+        let Some(window) = self.context.window() else { return };
+        let state = window.global::<InspectorState>();
+        let Some(project) = self.with(|s| s.editor.project.clone()) else { return };
+        if state.get_finding_beats() {
+            return;
+        }
+        state.set_finding_beats(true);
+        let project_id = project.id.clone();
+        let weak = Rc::downgrade(self);
+        crate::tasks::background(
+            "beats",
+            move || vf_audio::beats::analyse(&project, &|_| {}, &|| false),
+            move |result| {
+                let Some(this) = weak.upgrade() else { return };
+                if let Some(window) = this.context.window() {
+                    window.global::<InspectorState>().set_finding_beats(false);
+                }
+                if this.with(|s| s.editor.project.id.clone()) != Some(project_id) {
+                    return;
+                }
+                match result {
+                    Ok(analysis) => {
+                        let analysis = Arc::new(analysis);
+                        this.with(|s| s.beat_analysis = Some(analysis.clone()));
+                        done(&this, &analysis);
+                    }
+                    Err(error) => this.context.toasts.error("Could not find the beats", &error.to_string()),
+                }
+            },
+        );
+    }
+
     fn refresh_inspector(&self) {
         self.with(|s| s.inspector_key = None);
         self.sync_ui();
@@ -251,6 +360,12 @@ impl EditorController {
 
 fn visual_selection(editor: &Editor) -> Vec<String> {
     editor.selected_items().into_iter().filter(|item| item.kind.is_visual()).map(|item| item.id.clone()).collect()
+}
+
+/// Kind of one effect of the selected clip: beat settings apply to that
+/// effect on every selected clip.
+fn primary_effect_kind(editor: &Editor, effect: &str) -> Option<EffectKind> {
+    editor.selected_item()?.effects.iter().find(|e| e.id == effect).map(|e| e.kind)
 }
 
 fn current_transform(item: &TimelineItem, time: f64) -> Transform {
@@ -418,6 +533,10 @@ fn choose(editor: &mut Editor, field: &str, value: &str) {
                     editor.update_export(|export| export.fps = fps);
                 }
             }
+        }
+        _ if field.starts_with("beat-every:") => {
+            let (Some(kind), Ok(every)) = (primary_effect_kind(editor, &field["beat-every:".len()..]), value.parse::<u32>()) else { return };
+            editor.set_effect_on_beat(&visual_selection(editor), kind, Some(every), None);
         }
         _ => log::debug!("inspector: unknown choice {field}"),
     }
@@ -671,6 +790,9 @@ pub(super) fn sync(editor: &Editor, state: &InspectorState, last: &mut Option<Sy
     if item.kind.is_visual() {
         sync_animation(editor, item, state);
         sync_effects(item, state);
+        state.set_beat_count(project.beats.len() as i32);
+        state.set_beat_focus(project.beat_options.focus.as_str().into());
+        state.set_beat_amount((project.beat_options.amount() * 100.0) as f32);
     }
 }
 
@@ -683,6 +805,7 @@ fn sync_effects(item: &TimelineItem, state: &InspectorState) {
             label: effect_label(effect.kind).into(),
             amount: (effect.amount() * 100.0) as f32,
             adjustable: effect_preset(effect.kind).is_some_and(|p| p.adjustable),
+            on_beat: effect.on_beat.unwrap_or(0) as i32,
         })
         .collect();
     let model = state.get_clip_effects();
