@@ -211,13 +211,25 @@ pub struct Editor {
     clipboard: Vec<TimelineItem>,
     revision: u64,
     last_nudge: Option<Instant>,
+    /// Open `begin_batch` calls, and whether the batch has its undo step yet.
+    batch: (u32, bool),
 }
 
 impl Editor {
     /// Opens a (migrated) project and repairs its tracks.
     pub fn new(project: Project) -> Self {
-        let mut editor =
-            Editor { project, time: 0.0, selection: vec![], primary: None, past: vec![], future: vec![], clipboard: vec![], revision: 0, last_nudge: None };
+        let mut editor = Editor {
+            project,
+            time: 0.0,
+            selection: vec![],
+            primary: None,
+            past: vec![],
+            future: vec![],
+            clipboard: vec![],
+            revision: 0,
+            last_nudge: None,
+            batch: (0, false),
+        };
         for index in 0..editor.project.tracks.len() {
             editor.repair_track(index);
         }
@@ -306,6 +318,14 @@ impl Editor {
     // ------------------------------------------------------------ history
 
     fn snapshot(&mut self) {
+        if self.batch.0 > 0 {
+            // A batch is one undo step: the document as it was before its first change.
+            if self.batch.1 {
+                self.future.clear();
+                return;
+            }
+            self.batch.1 = true;
+        }
         if self.past.len() >= HISTORY_LIMIT {
             self.past.remove(0);
         }
@@ -318,6 +338,30 @@ impl Editor {
     /// Call before a continuous change (drag, slider) so the gesture is one undo step.
     pub fn begin_change(&mut self) {
         self.snapshot();
+    }
+
+    /// Every change until the matching `end_batch` is one undo step (a request
+    /// to the AI assistant that adds twenty captions is undone at once).
+    pub fn begin_batch(&mut self) {
+        if self.batch.0 == 0 {
+            self.batch.1 = false;
+        }
+        self.batch.0 += 1;
+    }
+
+    pub fn end_batch(&mut self) {
+        self.batch.0 = self.batch.0.saturating_sub(1);
+    }
+
+    /// Replaces the whole document (one undo step), e.g. going back to how it
+    /// was before an AI request. The project keeps its id.
+    pub fn replace_project(&mut self, project: Project) {
+        if project == self.project {
+            return;
+        }
+        self.snapshot();
+        let id = self.project.id.clone();
+        self.restore(Project { id, ..project });
     }
 
     fn touched(&mut self) {
@@ -991,39 +1035,110 @@ impl Editor {
         self.snapshot();
         let mut created = Vec::new();
         for id in targets {
-            let Some((t, i)) = self.find(&id) else { continue };
-            let before = self.project.tracks[t].items[i].clone();
-            let offset = time - before.start;
-            let mut right = before.clone();
-            right.id = uid(before.kind.as_str());
-            right.start = time;
-            right.duration = before.duration - offset;
-            right.source_in = Some(before.source_in() + offset * before.speed());
-            right.keyframes = if before.keyframes.is_empty() { vec![] } else { trim_keyframes(&before, offset, right.duration) };
-            right.transition = None;
-            if right.anim_in.is_some() {
-                right.anim_in = Some(Animation { kind: AnimationInKind::None, duration: 0.0 });
+            if let Some(location) = self.find(&id) {
+                created.push(self.split_item(location, time));
             }
-            let left = &mut self.project.tracks[t].items[i];
-            if left.anim_out.is_some() {
-                left.anim_out = Some(Animation { kind: AnimationOutKind::None, duration: 0.0 });
-            }
-            if left.fade_out() > 0.0 {
-                right.fade_out = left.fade_out;
-                left.fade_out = Some(0.0);
-            }
-            if right.fade_in() > 0.0 {
-                right.fade_in = Some(0.0);
-            }
-            (left.effects, right.effects) = split_effects(&before.effects, before.duration, offset);
-            left.duration = offset;
-            left.keyframes = if before.keyframes.is_empty() { vec![] } else { trim_keyframes(&before, 0.0, offset) };
-            created.push(right.id.clone());
-            self.project.tracks[t].items.push(right);
-            self.repair_all([t]);
         }
         self.select_many(&created);
         self.touched();
+    }
+
+    /// Cuts one clip in two at timeline `time` (inside it); returns the id of the right part.
+    fn split_item(&mut self, (t, i): (usize, usize), time: f64) -> String {
+        let before = self.project.tracks[t].items[i].clone();
+        let offset = time - before.start;
+        let mut right = before.clone();
+        right.id = uid(before.kind.as_str());
+        right.start = time;
+        right.duration = before.duration - offset;
+        right.source_in = Some(before.source_in() + offset * before.speed());
+        right.keyframes = if before.keyframes.is_empty() { vec![] } else { trim_keyframes(&before, offset, right.duration) };
+        right.transition = None;
+        if right.anim_in.is_some() {
+            right.anim_in = Some(Animation { kind: AnimationInKind::None, duration: 0.0 });
+        }
+        let left = &mut self.project.tracks[t].items[i];
+        if left.anim_out.is_some() {
+            left.anim_out = Some(Animation { kind: AnimationOutKind::None, duration: 0.0 });
+        }
+        if left.fade_out() > 0.0 {
+            right.fade_out = left.fade_out;
+            left.fade_out = Some(0.0);
+        }
+        if right.fade_in() > 0.0 {
+            right.fade_in = Some(0.0);
+        }
+        (left.effects, right.effects) = split_effects(&before.effects, before.duration, offset);
+        left.duration = offset;
+        left.keyframes = if before.keyframes.is_empty() { vec![] } else { trim_keyframes(&before, 0.0, offset) };
+        let id = right.id.clone();
+        self.project.tracks[t].items.push(right);
+        self.repair_all([t]);
+        id
+    }
+
+    /// Cuts `start..end` out of the timeline: clips are split at both ends, the
+    /// part in between is removed and everything later moves left to close the
+    /// gap (a ripple delete). Works on every unlocked track, or only on `tracks`
+    /// (the others keep their timing). Returns how many clips were cut or removed.
+    pub fn remove_range(&mut self, start: f64, end: f64, tracks: Option<&[String]>) -> usize {
+        let start = start.max(0.0);
+        let length = end - start;
+        if length.is_nan() || length < self.frame().min(MIN_CLIP_DURATION) {
+            return 0;
+        }
+        let targets: Vec<usize> = (0..self.project.tracks.len())
+            .filter(|&t| {
+                let track = &self.project.tracks[t];
+                !track.locked && tracks.is_none_or(|ids| ids.contains(&track.id))
+            })
+            .collect();
+        let reaches = |item: &TimelineItem| !item.locked && item.end() > start + 1e-6;
+        if !targets.iter().any(|&t| self.project.tracks[t].items.iter().any(reaches)) {
+            return 0;
+        }
+        self.snapshot();
+        let mut changed = 0;
+        for &t in &targets {
+            let mut pieces = HashSet::new();
+            for edge in [start, end] {
+                let crossing: Vec<String> = self.project.tracks[t]
+                    .items
+                    .iter()
+                    .filter(|item| !item.locked && edge > item.start + 1e-3 && edge < item.end() - 1e-3)
+                    .map(|item| item.id.clone())
+                    .collect();
+                for id in crossing {
+                    if let Some(location) = self.find(&id) {
+                        pieces.insert(self.split_item(location, edge));
+                        pieces.insert(id);
+                        changed += 1;
+                    }
+                }
+            }
+            let track = &mut self.project.tracks[t];
+            let count = track.items.len();
+            // What lies inside the range goes, and so do slivers the cuts left
+            // next to it (shorter than a clip can be).
+            track.items.retain(|item| {
+                let inside = item.start >= start - 1e-6 && item.end() <= end + 1e-6;
+                let sliver = pieces.contains(&item.id) && item.duration < MIN_CLIP_DURATION - 1e-9;
+                item.locked || !(inside || sliver)
+            });
+            changed += count - track.items.len();
+            for item in track.items.iter_mut().filter(|item| !item.locked && item.start >= end - 1e-6) {
+                item.start = (item.start - length).max(0.0);
+            }
+            self.repair_track(t);
+        }
+        if tracks.is_none() {
+            let beats = self.project.beats.iter().filter(|&&b| b < start || b >= end).map(|&b| if b >= end { b - length } else { b }).collect();
+            self.project.set_beats(beats);
+        }
+        let selection = self.selection.clone();
+        self.select_many(&selection);
+        self.touched();
+        changed
     }
 
     pub fn delete_selected(&mut self, ripple: bool) {
@@ -1882,6 +1997,67 @@ mod tests {
         };
         e.project.assets.push(asset.clone());
         e.add_asset(&asset, Placement { start: Some(start), ..Default::default() }).unwrap()
+    }
+
+    #[test]
+    fn removing_a_range_cuts_every_track_and_closes_the_gap() {
+        let mut e = editor();
+        let video = add_video(&mut e, "v", true, 0.0);
+        let title = add_text(&mut e, 1.0);
+        let later = e.add_item(TimelineItem { duration: 1.0, ..text_item("Later", None) }, Placement { start: Some(3.5), ..Default::default() }).unwrap();
+        let changed = e.remove_range(1.5, 2.5, None);
+        assert!(changed >= 3, "{changed}");
+        let videos: Vec<&TimelineItem> = e.project.items().filter(|i| i.kind == ItemKind::Video).collect();
+        assert_eq!(videos.len(), 2, "the video is cut in two");
+        assert!((videos[0].start - 0.0).abs() < 1e-9 && (videos[0].duration - 1.5).abs() < 1e-9);
+        assert!((videos[1].start - 1.5).abs() < 1e-9 && (videos[1].duration - 1.5).abs() < 1e-9);
+        assert!((videos[1].source_in() - 2.5).abs() < 1e-9, "the second part plays on after the cut");
+        assert!(e.item(&video).is_some());
+        // The title (1..3) loses its middle second; the later text moves back by a second.
+        let titles: f64 = e.project.items().filter(|i| i.name == "Hi").map(|i| i.duration).sum();
+        assert!((titles - 1.0).abs() < 1e-9, "{titles}");
+        assert!(e.item(&title).is_some());
+        assert!((e.item(&later).unwrap().start - 2.5).abs() < 1e-9);
+        // One undo step brings everything back.
+        e.undo();
+        assert_eq!(e.project.items().count(), 3);
+        assert!((e.item(&later).unwrap().start - 3.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn removing_a_range_on_some_tracks_leaves_the_others() {
+        let mut e = editor();
+        add_video(&mut e, "v", true, 0.0);
+        let text = add_text(&mut e, 3.0);
+        let video_track = e.project.tracks.iter().find(|t| t.kind == TrackKind::Video).unwrap().id.clone();
+        e.remove_range(0.0, 1.0, Some(&[video_track]));
+        let video = e.project.items().find(|i| i.kind == ItemKind::Video).unwrap();
+        assert!((video.start).abs() < 1e-9 && (video.duration - 3.0).abs() < 1e-9 && (video.source_in() - 1.0).abs() < 1e-9);
+        assert_eq!(e.item(&text).unwrap().start, 3.0, "the text track keeps its timing");
+        assert_eq!(e.remove_range(5.0, 5.0, None), 0, "an empty range changes nothing");
+    }
+
+    #[test]
+    fn a_batch_is_one_undo_step() {
+        let mut e = editor();
+        let before = e.project.clone();
+        e.begin_batch();
+        add_text(&mut e, 0.0);
+        add_text(&mut e, 4.0);
+        e.rename("Batched");
+        e.end_batch();
+        assert_eq!(e.project.items().count(), 2);
+        e.undo();
+        assert_eq!(e.project.items().count(), 0);
+        assert_eq!(e.project.name, before.name);
+        assert!(!e.can_undo());
+        // Going back to a saved state is itself undoable.
+        e.redo();
+        let after = e.project.clone();
+        e.replace_project(before.clone());
+        assert_eq!(e.project.items().count(), 0);
+        e.undo();
+        assert_eq!(e.project.items().count(), after.items().count());
     }
 
     #[test]

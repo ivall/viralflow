@@ -40,6 +40,10 @@ export global SettingsState {
     in property <string> transcription-model;
     in property <string> export-folder;
     in property <bool> hardware;
+    // AI apps (MCP)
+    in property <bool> mcp-enabled;
+    in property <string> mcp-status;
+    in property <bool> mcp-running;
     // Model picker
     in property <bool> picker-open;
     in property <bool> picker-speech;
@@ -64,6 +68,8 @@ export global SettingsState {
     callback picker-filter(string, string);
     callback pick(string);
     callback close-picker();
+    /// Copies a setup snippet ("desktop", "claude-code", "http").
+    callback copy(string);
 }
 
 component Group inherits Rectangle {
@@ -111,6 +117,24 @@ component Row inherits Rectangle {
         }
     }
     if !root.last: Rectangle { y: parent.height - 1px; height: 1px; background: Theme.line; }
+}
+
+component McpSetup inherits HorizontalLayout {
+    in property <string> title;
+    in property <string> detail;
+    in property <string> action;
+    in property <string> what;
+    spacing: 16px;
+    VerticalLayout {
+        horizontal-stretch: 1;
+        spacing: 2px;
+        Text { text: root.title; color: Theme.fg; font-size: Theme.text-xs; font-weight: 500; }
+        Text { text: root.detail; color: Theme.muted; font-size: Theme.text-2xs; wrap: word-wrap; }
+    }
+    VerticalLayout {
+        alignment: center;
+        Button { text: root.action; icon: Icons.copy; kind: ButtonKind.outline; size: ButtonSize.sm; clicked => { SettingsState.copy(root.what); } }
+    }
 }
 
 component ModelButton inherits Rectangle {
@@ -380,7 +404,7 @@ export component SettingsView inherits Rectangle {
                         padding: 16px;
                         spacing: 12px;
                         Text {
-                            text: "Optional. With an OpenRouter key you can auto-edit voiceovers with your photos, rewrite text and use cloud captions. The key is kept in your system's password store and only sent to OpenRouter.";
+                            text: "Optional. With an OpenRouter key the AI panel in the editor edits your video from plain requests (cuts, captions, text, effects, beat sync…), and you can auto-edit voiceovers, rewrite text and use cloud captions. The key is kept in your system's password store and only sent to OpenRouter.";
                             color: Theme.muted;
                             font-size: Theme.text-2xs;
                             wrap: word-wrap;
@@ -404,7 +428,7 @@ export component SettingsView inherits Rectangle {
                             spacing: 6px;
                             Text { text: "Model"; color: Theme.fg; font-size: Theme.text-xs; font-weight: 500; }
                             ModelButton { model: SettingsState.ai-model; clicked => { SettingsState.open-picker(false); } }
-                            Text { text: "Used for photo matching and rewriting. Changes are saved right away."; color: Theme.faint; font-size: Theme.text-2xs; }
+                            Text { text: "Used by the AI editor, photo matching and rewriting. The AI editor needs a model that can use tools; one with vision can also look at your frames."; color: Theme.faint; font-size: Theme.text-2xs; wrap: word-wrap; }
                         }
                         HorizontalLayout {
                             spacing: 8px;
@@ -417,6 +441,43 @@ export component SettingsView inherits Rectangle {
                                 clicked => { SettingsState.save-key(root.key-draft); key-field.text = ""; root.key-draft = ""; }
                             }
                             if SettingsState.has-key: Button { text: "Remove key"; kind: ButtonKind.ghost; size: ButtonSize.sm; clicked => { SettingsState.save-key(""); } }
+                        }
+                    }
+                }
+
+                Group {
+                    title: "AI apps (MCP)";
+                    Row {
+                        title: "Let AI apps edit in ViralFlow";
+                        detail: "Claude, Cursor, VS Code and other apps that speak MCP can open your projects and edit them while you watch, with every tool of the AI editor. Only apps on this computer can connect.";
+                        last: !SettingsState.mcp-enabled;
+                        Switch { checked: SettingsState.mcp-enabled; toggled => { SettingsState.toggle("mcp"); } }
+                    }
+                    if SettingsState.mcp-enabled: VerticalLayout {
+                        padding: 16px;
+                        spacing: 12px;
+                        HorizontalLayout {
+                            spacing: 8px;
+                            VerticalLayout { alignment: center; Icon { source: SettingsState.mcp-running ? Icons.circle-check : Icons.circle-alert; size: 14px; colorize: SettingsState.mcp-running ? Theme.ok : Theme.warn; } }
+                            Text { horizontal-stretch: 1; text: SettingsState.mcp-status; color: Theme.muted; font-size: Theme.text-2xs; wrap: word-wrap; vertical-alignment: center; }
+                        }
+                        McpSetup {
+                            title: "Claude Desktop, Cursor, Windsurf…";
+                            detail: "Add ViralFlow to the app's MCP servers (in Claude Desktop: Settings → Developer → Edit Config), then restart the app. ViralFlow opens by itself when the AI needs it.";
+                            action: "Copy config";
+                            what: "desktop";
+                        }
+                        McpSetup {
+                            title: "Claude Code";
+                            detail: "Run this command once in a terminal.";
+                            action: "Copy command";
+                            what: "claude-code";
+                        }
+                        if SettingsState.mcp-running: McpSetup {
+                            title: "Apps that connect over HTTP";
+                            detail: "While ViralFlow runs it also serves MCP over HTTP on this computer; the command includes the URL and the access token.";
+                            action: "Copy command";
+                            what: "http";
                         }
                     }
                 }

@@ -32,7 +32,11 @@ Native, lightweight & fast.
 - Export to MP4, MOV or WebM up to 4K, with GPU encoding (NVIDIA, AMD, Intel, Apple), voice cleanup and loudness normalisation.
 - Smooth preview: frames are decoded ahead of the playhead (on the GPU for HEVC, AV1 and 4K footage), and what you hear while editing is exactly what gets exported.
 - Your work is safe: autosave, a backup of the previous save, and projects that still open when a file is damaged or was saved by a newer version.
-- Optional AI tools through your own OpenRouter key: rewrite text, cloud captions and auto-edit voiceovers with your photos.
+- AI editor: tell it what you want ("cut the silences", "add highlight captions", "sync zooms to the beat") and it edits the
+  project in front of you with your own OpenRouter key: it reads the timeline, hears the speech, looks at frames and
+  uses every editing tool; each request can be undone at once.
+- Works with Claude, Cursor and other AI apps over MCP: they get the same tools and edit while you watch.
+- More optional AI tools: rewrite text, cloud captions and auto-edit voiceovers with your photos.
 - Windows, macOS and Linux.
 
 <table>
@@ -134,14 +138,37 @@ opt-in with `VF_VAAPI=1`. `VF_HWDECODE=off` turns it off everywhere.
 Pushing a version tag that matches `version` in `Cargo.toml` (`git tag v1.0.0 && git push origin v1.0.0`)
 builds every installer on GitHub Actions and attaches them to a draft release.
 
+## AI editor and MCP
+
+**In the editor:** add your [OpenRouter](https://openrouter.ai) key in Settings → AI and pick a model that can use
+tools (one with vision can also look at your frames). Open the **AI** tab next to the media panel (or press Ctrl+K)
+and ask. The AI sees the timeline, can transcribe speech, render frames, find the beats of the music and use every
+editing tool; changes appear live, each request is one step to undo, and the chat is kept per project.
+
+**From other AI apps (MCP):** ViralFlow is an MCP server with the same tools. In Settings → AI apps (MCP) copy the
+setup for your app:
+
+- Claude Desktop, Cursor, Windsurf…: add to the app's MCP servers (ViralFlow starts by itself when needed):
+
+  ```json
+  { "mcpServers": { "viralflow": { "command": "<path to viralflow executable>", "args": ["--mcp"] } } }
+  ```
+
+- Claude Code: `claude mcp add viralflow -- "<path to viralflow executable>" --mcp`
+- Apps that speak MCP over HTTP: while ViralFlow runs it listens on `http://127.0.0.1:47615/mcp` (the next free port
+  if that one is taken); requests need the token shown by the copied command (`Authorization: Bearer …`).
+
+Only apps on this computer can connect, and requests from web pages are refused. The switch in Settings turns it off.
+
 ## Privacy
 
 Everything runs on your computer: media, projects and local Whisper captions never leave it. The
 app goes online only when you ask it to: to download a Whisper speech model (from a pinned commit on
 Hugging Face, checked against its SHA-256),
 and for the AI tools, which are off until you add your own [OpenRouter](https://openrouter.ai)
-key. Only what you send to them (text, the clip's audio, photos for auto-edit) is uploaded. The
-key is kept in the system credential store.
+key. Only what you send to them (text, the clip's audio, photos for auto-edit; for the AI editor the
+timeline as JSON, your requests and the frames it looks at) is uploaded. The key is kept in the
+system credential store. The MCP server only answers apps on this computer.
 
 ## Logs
 

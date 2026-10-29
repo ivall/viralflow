@@ -26,6 +26,8 @@ pub struct Context {
     /// The OpenRouter API key (system credential store).
     pub keys: crate::secrets::KeyStore,
     pub toasts: Toasts,
+    /// The MCP server AI apps connect to.
+    pub mcp: crate::agent::mcp::Service,
 }
 
 impl Context {
@@ -62,7 +64,8 @@ pub fn run() -> Result<()> {
     let settings = SettingsStore::load(&paths);
     let keys = crate::secrets::KeyStore::new(&paths.data);
     crate::media::install_builtin_sounds(&paths.builtin);
-    let context = Rc::new(Context { window: window.as_weak(), gpu, paths, settings, keys, toasts });
+    let mcp = crate::agent::mcp::Service::new(&paths.data);
+    let context = Rc::new(Context { window: window.as_weak(), gpu, paths, settings, keys, toasts, mcp });
 
     vf_media::init();
     let text = std::sync::Arc::new(vf_render::TextEngine::new());
@@ -80,6 +83,14 @@ pub fn run() -> Result<()> {
                 home.refresh();
             }
         }));
+    }
+    // The AI editor: the chat in the editor and the tools AI apps reach over MCP.
+    let _chat = crate::agent::chat::Chat::new(context.clone(), editor.clone());
+    crate::agent::bridge::install(crate::agent::host::Host::new(context.clone(), editor.clone(), home.clone()));
+    if context.settings.get().mcp_enabled {
+        if let Err(error) = context.mcp.start() {
+            log::warn!("MCP server: {error}");
+        }
     }
     home.refresh();
     // Development aids: open a page or the auto-edit dialog straight away.
@@ -117,7 +128,10 @@ pub fn run() -> Result<()> {
     });
 
     crate::window::snapshot_if_requested(&window);
-    window.run().map_err(vf_core::Error::from_display)?;
+    let result = window.run().map_err(vf_core::Error::from_display);
+    context.mcp.stop();
+    crate::agent::bridge::uninstall();
+    result?;
     drop(home);
     drop(editor);
     Ok(())

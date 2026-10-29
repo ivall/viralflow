@@ -188,7 +188,7 @@ impl EditorController {
         *self.quit_after_export.borrow_mut() = true;
     }
 
-    fn export_start(self: &Rc<Self>) {
+    pub(super) fn export_start(self: &Rc<Self>) {
         let Some(window) = self.context.window() else { return };
         let state = window.global::<ExportState>();
         self.flush();
@@ -235,6 +235,9 @@ impl EditorController {
             while let Ok(event) = job.events.try_recv() {
                 match event {
                     Event::Progress(p) => {
+                        if let Some(job) = self.export_watch.borrow().as_ref() {
+                            job.progress(p.fraction, &p.stage);
+                        }
                         state.set_stage(p.stage.into());
                         state.set_fraction(p.fraction as f32);
                         let frames = if p.frame > 0 {
@@ -257,6 +260,20 @@ impl EditorController {
             let _ = slint::quit_event_loop();
         }
         *self.export_job.borrow_mut() = None;
+        if let Some(job) = self.export_watch.borrow_mut().take() {
+            job.finish(match &event {
+                Event::Done(path) => {
+                    let megabytes = std::fs::metadata(path).map(|m| m.len() as f64 / 1_048_576.0).unwrap_or(0.0);
+                    Ok(serde_json::json!({
+                        "summary": format!("Exported {}", path.display()),
+                        "path": path.display().to_string(),
+                        "mb": (megabytes * 10.0).round() / 10.0,
+                    }))
+                }
+                Event::Failed(error) => Err(format!("The export failed: {error}")),
+                _ => Err("The export was cancelled.".into()),
+            });
+        }
         match event {
             Event::Done(path) => {
                 *self.export_result.borrow_mut() = path.display().to_string();

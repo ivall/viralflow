@@ -73,6 +73,30 @@ impl Client {
         Ok(content)
     }
 
+    pub fn model(&self) -> &str {
+        &self.model
+    }
+
+    /// One step of a conversation in which the model may call `tools` (OpenAI
+    /// function format). The reply's `message` goes back into `messages` as it
+    /// is (it carries the model's reasoning for the next step).
+    pub fn chat_tools(&self, messages: &[Value], tools: &Value) -> Result<Reply> {
+        let body = json!({
+            "model": self.model,
+            "messages": messages,
+            "tools": tools,
+            "tool_choice": "auto",
+            "temperature": 0.3,
+            "max_tokens": 12000,
+            "usage": { "include": true },
+        });
+        let value = self.post(CHAT_URL, body)?;
+        if let Some(message) = value.pointer("/error/message").and_then(Value::as_str) {
+            return Err(Error::msg(format!("The AI model failed: {message}")));
+        }
+        parse_reply(&value)
+    }
+
     pub fn chat_json<T: for<'de> Deserialize<'de>>(&self, system: &str, user: Value, temperature: f64) -> Result<T> {
         let content = self.chat(json!([{ "role": "system", "content": system }, { "role": "user", "content": user }]), temperature, true)?;
         let trimmed = content.trim().trim_start_matches("```json").trim_start_matches("```").trim_end_matches("```").trim();
@@ -95,6 +119,60 @@ impl Client {
         let value = self.post(TRANSCRIPTION_URL, body)?;
         Ok(parse_transcription(&value))
     }
+}
+
+/// What the model answered in a conversation with tools.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Reply {
+    /// The assistant message, to append to the conversation unchanged.
+    pub message: Value,
+    pub text: String,
+    pub tool_calls: Vec<ToolCall>,
+    /// USD, when OpenRouter reports it.
+    pub cost: Option<f64>,
+    /// "stop", "tool_calls", "length"…
+    pub finish: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToolCall {
+    pub id: String,
+    pub name: String,
+    /// JSON text as the model wrote it (it may be malformed).
+    pub arguments: String,
+}
+
+fn parse_reply(value: &Value) -> Result<Reply> {
+    let choice = value.pointer("/choices/0").ok_or_else(|| Error::msg("The AI model returned no answer."))?;
+    let mut message = choice.get("message").cloned().unwrap_or_else(|| json!({ "role": "assistant" }));
+    let text = message.get("content").and_then(Value::as_str).unwrap_or_default().trim().to_string();
+    let tool_calls: Vec<ToolCall> = message
+        .get("tool_calls")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|call| {
+            Some(ToolCall {
+                id: call.get("id").and_then(Value::as_str).unwrap_or_default().to_string(),
+                name: call.pointer("/function/name")?.as_str()?.to_string(),
+                arguments: call.pointer("/function/arguments").and_then(Value::as_str).unwrap_or("{}").to_string(),
+            })
+        })
+        .collect();
+    // Some providers leave out the content or the role; the next request needs both.
+    if let Some(object) = message.as_object_mut() {
+        object.insert("role".into(), json!("assistant"));
+        if !object.get("content").is_some_and(Value::is_string) {
+            object.insert("content".into(), json!(""));
+        }
+    }
+    Ok(Reply {
+        message,
+        text,
+        tool_calls,
+        cost: value.pointer("/usage/cost").and_then(Value::as_f64),
+        finish: choice.get("finish_reason").and_then(Value::as_str).unwrap_or_default().to_string(),
+    })
 }
 
 fn parse_transcription(value: &Value) -> (Vec<TimedSegment>, Option<Vec<TimedWord>>) {
@@ -172,6 +250,8 @@ pub struct ModelSummary {
     /// USD per one million output tokens.
     pub completion_price: f64,
     pub vision: bool,
+    /// Can call tools (the AI editor needs this).
+    pub tools: bool,
 }
 
 /// The public model catalogue (no key needed), newest first. `transcription`
@@ -204,6 +284,7 @@ fn parse_models(value: &Value, transcription: bool) -> Vec<ModelSummary> {
                 prompt_price: price(entry, "prompt"),
                 completion_price: price(entry, "completion"),
                 vision: has(entry, "/architecture/input_modalities", "image"),
+                tools: has(entry, "/supported_parameters", "tools"),
             };
             Some((entry.get("created").and_then(Value::as_i64).unwrap_or(0), summary))
         })
@@ -235,13 +316,31 @@ mod tests {
     fn lists_newest_models_with_prices() {
         let value = json!({ "data": [
             { "id": "a/old", "name": "Old", "created": 1, "pricing": { "prompt": "0.000001", "completion": "0.000002" }, "architecture": { "output_modalities": ["text"], "input_modalities": ["text"] } },
-            { "id": "b/new", "name": "New", "created": 5, "pricing": { "prompt": "0.000003" }, "architecture": { "output_modalities": ["text"], "input_modalities": ["text", "image"] } },
+            { "id": "b/new", "name": "New", "created": 5, "pricing": { "prompt": "0.000003" }, "supported_parameters": ["tools", "temperature"], "architecture": { "output_modalities": ["text"], "input_modalities": ["text", "image"] } },
             { "id": "c/speech", "created": 9, "architecture": { "output_modalities": ["transcription"] } }
         ]});
         let models = parse_models(&value, false);
         assert_eq!(models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["b/new", "a/old"]);
         assert!(models[0].vision && (models[0].prompt_price - 3.0).abs() < 1e-9);
+        assert!(models[0].tools && !models[1].tools);
         assert_eq!(parse_models(&value, true)[0].id, "c/speech");
+    }
+
+    #[test]
+    fn reads_tool_calls() {
+        let value = json!({
+            "choices": [{ "finish_reason": "tool_calls", "message": { "content": null, "tool_calls": [
+                { "id": "call_1", "type": "function", "function": { "name": "add_texts", "arguments": "{\"texts\":[]}" } }
+            ]}}],
+            "usage": { "cost": 0.0021 }
+        });
+        let reply = parse_reply(&value).unwrap();
+        assert_eq!(reply.tool_calls, vec![ToolCall { id: "call_1".into(), name: "add_texts".into(), arguments: "{\"texts\":[]}".into() }]);
+        assert_eq!(reply.message["role"], "assistant");
+        assert_eq!(reply.message["content"], "");
+        assert_eq!(reply.cost, Some(0.0021));
+        assert_eq!(reply.finish, "tool_calls");
+        assert!(parse_reply(&json!({ "choices": [] })).is_err());
     }
 
     #[test]

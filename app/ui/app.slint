@@ -18,18 +18,20 @@ import { Choice, Button, ButtonKind, ButtonSize, Toaster, Toast, ToastTone, Text
 import { HomeView, HomeState, ProjectCard, AspectCard } from "home.slint";
 import { AutoEditState, FileRow, RowState } from "autoedit.slint";
 import { SettingsView, SettingsState, SpeechModel, ModelRow } from "settings.slint";
-import { EditorView, EditorState, TimelineState, InspectorState, AssetsState, DragState, ExportState, ExportPhase, CaptionsState } from "editor/editor.slint";
+import { EditorView, EditorState, TimelineState, InspectorState, AssetsState, DragState, ExportState, ExportPhase, CaptionsState, ChatState, ChatEntry } from "editor/editor.slint";
 import { AssetTile, PresetCard, StickerGroup, ShapeCard, EffectCard } from "editor/assets.slint";
 import { ItemInfo, TransformData, FrameData, TextData, ShapeData, AdjustData, AudioData, SpeedData, AnimationData, ProjectData, Stat, EffectRow } from "editor/inspector.slint";
 import { TrackRow, ClipView, KeyMark, SeamView, Tick, EffectBar } from "editor/timeline.slint";
 import { SaveState, Handle, PointerPhase } from "editor/state.slint";
 
-export { Theme, Icons, Platform, HomeState, ProjectCard, AspectCard, Toast, ToastTone, EditorState, SaveState, Handle, PointerPhase, MenuEntry, TimelineState, TrackRow, ClipView, KeyMark, SeamView, Tick, EffectBar, InspectorState, ItemInfo, TransformData, FrameData, TextData, ShapeData, AdjustData, AudioData, SpeedData, AnimationData, ProjectData, Stat, EffectRow, Choice, AssetsState, DragState, AssetTile, PresetCard, StickerGroup, ShapeCard, EffectCard, ExportState, ExportPhase, CaptionsState, AutoEditState, FileRow, RowState, SettingsState, SpeechModel, ModelRow }
+export { Theme, Icons, Platform, HomeState, ProjectCard, AspectCard, Toast, ToastTone, EditorState, SaveState, Handle, PointerPhase, MenuEntry, TimelineState, TrackRow, ClipView, KeyMark, SeamView, Tick, EffectBar, InspectorState, ItemInfo, TransformData, FrameData, TextData, ShapeData, AdjustData, AudioData, SpeedData, AnimationData, ProjectData, Stat, EffectRow, Choice, AssetsState, DragState, AssetTile, PresetCard, StickerGroup, ShapeCard, EffectCard, ExportState, ExportPhase, CaptionsState, ChatState, ChatEntry, AutoEditState, FileRow, RowState, SettingsState, SpeechModel, ModelRow }
 
 export enum Page { home, editor, settings }
 
 export global AppState {
     in-out property <Page> page: Page.home;
+    /// Where the settings page's Back button goes (the editor when it was opened from there).
+    in-out property <Page> back-page: Page.home;
     in property <bool> maximized;
     in property <[Toast]> toasts;
     callback drag-window();
@@ -207,7 +209,10 @@ component TitleBar inherits Rectangle {
                     icon: Icons.arrow-left;
                     kind: ButtonKind.ghost;
                     size: ButtonSize.sm;
-                    clicked => { AppState.page = Page.home; }
+                    clicked => {
+                        AppState.page = AppState.back-page;
+                        AppState.back-page = Page.home;
+                    }
                 }
             }
             Rectangle { horizontal-stretch: 1; }

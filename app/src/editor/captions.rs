@@ -88,7 +88,7 @@ impl Panel {
 }
 
 /// Clips whose sound can be transcribed (audio first, then the longest).
-fn speech_sources(editor: &Editor, offline: &std::collections::HashSet<String>) -> Vec<(String, String, f64)> {
+pub(super) fn speech_sources(editor: &Editor, offline: &std::collections::HashSet<String>) -> Vec<(String, String, f64)> {
     let project = &editor.project;
     let mut items: Vec<_> = project
         .items()

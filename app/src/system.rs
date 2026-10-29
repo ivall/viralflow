@@ -34,3 +34,21 @@ pub fn open_path(path: &Path) {
         log::warn!("could not open {}: {error}", path.display());
     }
 }
+
+/// Puts text on the system clipboard.
+pub fn copy_text(text: &str) -> Result<(), String> {
+    thread_local! {
+        // On Linux the text stays on the clipboard only while its owner lives.
+        static CLIPBOARD: std::cell::RefCell<Option<arboard::Clipboard>> = const { std::cell::RefCell::new(None) };
+    }
+    CLIPBOARD.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(arboard::Clipboard::new().map_err(|e| e.to_string())?);
+        }
+        match slot.as_mut() {
+            Some(clipboard) => clipboard.set_text(text.to_string()).map_err(|e| e.to_string()),
+            None => Err("No clipboard".into()),
+        }
+    })
+}

@@ -44,8 +44,10 @@ impl SettingsPage {
             "snap" => s.snap = !s.snap,
             "safe-area" => s.safe_area = !s.safe_area,
             "hardware" => s.hardware_encoding = !s.hardware_encoding,
+            "mcp" => s.mcp_enabled = !s.mcp_enabled,
             _ => {}
         }));
+        on!(on_copy, |me, what| me.copy(&what));
         on!(on_choose, |me, field, value| {
             let value = value.to_string();
             me.update(|s| match field.as_str() {
@@ -112,10 +114,37 @@ impl SettingsPage {
     }
 
     fn update(&self, change: impl FnOnce(&mut crate::settings::Settings)) {
+        let mcp = self.context.settings.get().mcp_enabled;
         if let Err(error) = self.context.settings.update(change) {
             self.context.toasts.error("Settings could not be saved", &error.to_string());
         }
+        // The MCP server follows its switch.
+        match (mcp, self.context.settings.get().mcp_enabled) {
+            (false, true) => {
+                if let Err(error) = self.context.mcp.start() {
+                    self.context.toasts.error("AI apps can't connect", &error);
+                }
+            }
+            (true, false) => self.context.mcp.stop(),
+            _ => {}
+        }
         self.sync();
+    }
+
+    fn copy(&self, what: &str) {
+        let setup = crate::agent::mcp::setup(self.context.mcp.details());
+        let (text, title) = match what {
+            "desktop" => (setup.desktop, "Config copied"),
+            "claude-code" => (setup.claude_code, "Command copied"),
+            _ => (setup.http, "Command copied"),
+        };
+        if text.is_empty() {
+            return;
+        }
+        match crate::system::copy_text(&text) {
+            Ok(()) => self.context.toasts.success(title, "Paste it into the AI app's settings."),
+            Err(error) => self.context.toasts.error("Could not copy", &error),
+        }
     }
 
     pub fn sync(&self) {
@@ -134,6 +163,17 @@ impl SettingsPage {
         state.set_transcription_model(s.openrouter_transcription_model.clone().into());
         state.set_export_folder(s.export_folder.clone().into());
         state.set_hardware(s.hardware_encoding);
+        state.set_mcp_enabled(s.mcp_enabled);
+        let details = self.context.mcp.details();
+        state.set_mcp_running(details.is_some());
+        state.set_mcp_status(
+            match details {
+                Some((url, _)) => format!("Ready for AI apps at {url} while ViralFlow runs. Their changes appear live and Ctrl+Z undoes them."),
+                None if s.mcp_enabled => "The MCP server could not start; see the logs.".to_string(),
+                None => String::new(),
+            }
+            .into(),
+        );
         let key = self.context.keys.status();
         state.set_has_key(key.has_key);
         state.set_key_hint(key.hint.into());

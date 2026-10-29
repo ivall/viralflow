@@ -1,6 +1,7 @@
 // Release builds are a GUI app without a console window.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod agent;
 mod app;
 mod autoedit;
 mod editor;
@@ -36,6 +37,10 @@ pub fn shortcut_label(shortcut: &str) -> String {
 }
 
 fn main() {
+    // `viralflow --mcp`: the MCP server AI apps start (it reaches the running app).
+    if std::env::args().skip(1).any(|arg| arg == "--mcp") {
+        std::process::exit(agent::mcp::run_stdio());
+    }
     let log_file = logs::init(paths::data_dir().ok().map(|dir| dir.join("logs")).as_deref());
     let see_log = log_file
         .map(|path| {

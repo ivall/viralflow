@@ -1,0 +1,362 @@
+// The AI panel: a chat with a model that edits the open project with the
+// same tools AI apps get over MCP. Rust (agent/chat.rs) runs the conversation.
+
+import { Theme, Icons } from "../theme.slint";
+import { Button, ButtonKind, ButtonSize, Icon, ScrollView, Spinner } from "../widgets.slint";
+import { SettingsState } from "../settings.slint";
+
+export struct ChatEntry {
+    /// "user", "assistant", "tool", "error" or "note".
+    kind: string,
+    text: string,
+    detail: string,
+    /// A tool still running.
+    working: bool,
+    failed: bool,
+    turn: int,
+    /// The request's changes can be undone from here.
+    can-undo: bool,
+}
+
+export global ChatState {
+    in property <[ChatEntry]> entries;
+    /// An OpenRouter key is set.
+    in property <bool> ready;
+    in property <bool> busy;
+    in property <string> status;
+    in property <string> model;
+    in property <string> cost;
+    in property <[string]> suggestions;
+    in-out property <string> draft;
+    /// Bumped when messages change (the list follows them while at its end).
+    in property <int> scroll-request;
+    /// Bumped to show the end in any case (a new request, another project).
+    in property <int> jump-request;
+    /// Bumped to put the cursor in the message box.
+    in property <int> focus-request;
+    callback send(string);
+    callback stop();
+    callback reset();
+    callback undo-turn(int);
+    callback open-settings();
+}
+
+component UserBubble inherits HorizontalLayout {
+    in property <string> text;
+    alignment: end;
+    padding-left: 36px;
+    Rectangle {
+        border-radius: 12px;
+        background: Theme.accent.with-alpha(0.2);
+        HorizontalLayout {
+            padding-left: 12px;
+            padding-right: 12px;
+            padding-top: 8px;
+            padding-bottom: 8px;
+            Text { text: root.text; color: Theme.fg; font-size: Theme.text-xs; wrap: word-wrap; }
+        }
+    }
+}
+
+component ToolRow inherits HorizontalLayout {
+    in property <ChatEntry> entry;
+    spacing: 8px;
+    padding-left: 2px;
+    VerticalLayout {
+        alignment: start;
+        padding-top: 1px;
+        if root.entry.working: Spinner { size: 13px; }
+        if !root.entry.working && !root.entry.failed: Icon { source: Icons.check; size: 13px; colorize: Theme.ok; }
+        if !root.entry.working && root.entry.failed: Icon { source: Icons.circle-alert; size: 13px; colorize: Theme.warn; }
+    }
+    VerticalLayout {
+        horizontal-stretch: 1;
+        spacing: 1px;
+        Text { text: root.entry.text; color: Theme.muted; font-size: Theme.text-2xs; font-weight: 500; wrap: word-wrap; }
+        if root.entry.detail != "": Text { text: root.entry.detail; color: root.entry.failed ? Theme.warn : Theme.faint; font-size: Theme.text-2xs; wrap: word-wrap; }
+    }
+}
+
+component Suggestion inherits Rectangle {
+    in property <string> text;
+    callback clicked();
+    height: label.preferred-height + 16px;
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: touch.has-hover ? Theme.line-strong : Theme.line;
+    background: touch.has-hover ? Theme.raised : transparent;
+    label := Text {
+        x: 12px;
+        width: parent.width - 24px;
+        text: root.text;
+        color: touch.has-hover ? Theme.fg : Theme.muted;
+        font-size: Theme.text-2xs;
+        wrap: word-wrap;
+        vertical-alignment: center;
+    }
+    touch := TouchArea { clicked => { root.clicked(); } }
+}
+
+/// The message box: Enter sends, Shift+Enter starts a new line.
+component Composer inherits Rectangle {
+    callback submit();
+    property <int> focus-request: ChatState.focus-request;
+    changed focus-request => { input.focus(); }
+    border-radius: 12px;
+    border-width: 1px;
+    border-color: input.has-focus ? Theme.accent : Theme.line;
+    background: Theme.raised;
+    height: box.preferred-height;
+    TouchArea {
+        mouse-cursor: MouseCursor.text;
+        clicked => { input.focus(); }
+    }
+    box := VerticalLayout {
+        padding-left: 12px;
+        padding-right: 8px;
+        padding-top: 10px;
+        padding-bottom: 8px;
+        spacing: 6px;
+        Rectangle {
+            min-height: 20px;
+            max-height: 140px;
+            preferred-height: input.preferred-height;
+            clip: true;
+            if ChatState.draft == "": Text {
+                x: 0;
+                y: 0;
+                width: parent.width;
+                text: ChatState.busy ? "The AI is working…" : "Tell the AI what to change in your video…";
+                color: Theme.faint;
+                font-size: Theme.text-xs;
+                wrap: word-wrap;
+            }
+            keys := FocusScope {
+                capture-key-pressed(event) => {
+                    if event.text == Key.Return && !event.modifiers.shift {
+                        root.submit();
+                        return accept;
+                    }
+                    reject
+                }
+                input := TextInput {
+                    width: parent.width;
+                    text <=> ChatState.draft;
+                    color: Theme.fg;
+                    font-size: Theme.text-xs;
+                    wrap: word-wrap;
+                    single-line: false;
+                    selection-background-color: Theme.accent.with-alpha(0.35);
+                    selection-foreground-color: Theme.fg;
+                }
+            }
+        }
+        HorizontalLayout {
+            spacing: 6px;
+            Text {
+                horizontal-stretch: 1;
+                text: ChatState.busy ? ChatState.status : ChatState.cost;
+                color: Theme.faint;
+                font-size: 11px;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            if !ChatState.busy: send := Button {
+                icon: Icons.arrow-up;
+                kind: ButtonKind.primary;
+                size: ButtonSize.sm;
+                tooltip: "Send (Enter)";
+                enabled: ChatState.draft != "";
+                clicked => { root.submit(); }
+            }
+            if ChatState.busy: stop := Button {
+                icon: Icons.square;
+                kind: ButtonKind.secondary;
+                size: ButtonSize.sm;
+                tooltip: "Stop";
+                clicked => { ChatState.stop(); }
+            }
+        }
+    }
+}
+
+/// The messages. While the user is at the end, new ones (and growing ones)
+/// scroll into view; scrolling up to read stops that until they come back
+/// down or press the arrow.
+component ChatList inherits Rectangle {
+    property <int> scroll-request: ChatState.scroll-request;
+    property <int> jump-request: ChatState.jump-request;
+    /// Scroll position that shows the end of the conversation.
+    property <length> bottom: min(0px, list.visible-height - list.content-height);
+    property <bool> follow: true;
+    changed scroll-request => {
+        if root.follow {
+            list.content-y = root.bottom;
+        }
+    }
+    changed jump-request => {
+        root.follow = true;
+        list.content-y = root.bottom;
+    }
+    // Wrapped text settles a frame later, and the panel can change size.
+    changed bottom => {
+        if root.follow {
+            list.content-y = root.bottom;
+        }
+    }
+
+    list := ScrollView {
+        width: parent.width;
+        height: parent.height;
+        content-width: self.visible-width;
+        content-height: max(self.visible-height, column.preferred-height);
+        scrolled => { root.follow = self.content-y <= root.bottom + 40px; }
+        column := VerticalLayout {
+            width: list.visible-width;
+            padding: 14px;
+            spacing: 12px;
+            alignment: start;
+            if ChatState.entries.length == 0: VerticalLayout {
+                spacing: 8px;
+                padding-top: 6px;
+                Text { text: "What should the AI do?"; color: Theme.fg; font-size: Theme.text-xs; font-weight: 600; }
+                Text {
+                    text: "It sees your timeline, can look at frames and hear the speech. Ask for anything: one change or a whole edit.";
+                    color: Theme.muted;
+                    font-size: Theme.text-2xs;
+                    wrap: word-wrap;
+                }
+                for suggestion in ChatState.suggestions: Suggestion {
+                    text: suggestion;
+                    clicked => { ChatState.send(suggestion); }
+                }
+            }
+            for entry in ChatState.entries: VerticalLayout {
+                spacing: 6px;
+                if entry.kind == "user": UserBubble { text: entry.text; }
+                if entry.kind == "assistant": Text { text: entry.text; color: Theme.fg; font-size: Theme.text-xs; wrap: word-wrap; }
+                if entry.kind == "tool": ToolRow { entry: entry; }
+                if entry.kind == "error": HorizontalLayout {
+                    spacing: 8px;
+                    VerticalLayout { alignment: start; Icon { source: Icons.circle-alert; size: 14px; colorize: Theme.danger; } }
+                    Text { horizontal-stretch: 1; text: entry.text; color: Theme.danger; font-size: Theme.text-2xs; wrap: word-wrap; }
+                }
+                if entry.kind == "note": Text { text: entry.text; color: Theme.faint; font-size: Theme.text-2xs; wrap: word-wrap; horizontal-alignment: center; }
+                if entry.can-undo: HorizontalLayout {
+                    alignment: start;
+                    Button { text: "Undo these changes"; icon: Icons.undo; kind: ButtonKind.ghost; size: ButtonSize.sm; enabled: !ChatState.busy; clicked => { ChatState.undo-turn(entry.turn); } }
+                }
+            }
+            if ChatState.busy: HorizontalLayout {
+                spacing: 8px;
+                VerticalLayout { alignment: center; Spinner { size: 13px; } }
+                Text { text: ChatState.status; color: Theme.muted; font-size: Theme.text-2xs; vertical-alignment: center; overflow: elide; }
+            }
+        }
+    }
+
+    if !root.follow: Rectangle {
+        x: parent.width - self.width - 14px;
+        y: parent.height - self.height - 10px;
+        width: 32px;
+        height: 32px;
+        border-radius: 16px;
+        background: jump-touch.has-hover ? Theme.hover : Theme.raised;
+        border-width: 1px;
+        border-color: Theme.line-strong;
+        drop-shadow-blur: 10px;
+        drop-shadow-color: #00000080;
+        Icon { source: Icons.chevron-down; size: 16px; colorize: Theme.fg; }
+        jump-touch := TouchArea {
+            mouse-cursor: MouseCursor.pointer;
+            clicked => {
+                root.follow = true;
+                list.content-y = root.bottom;
+            }
+        }
+    }
+}
+
+export component AssistantPanel inherits Rectangle {
+    // Settings may have just changed the key or the model (it is shown before Rust syncs the chat).
+    property <bool> ready: ChatState.ready || SettingsState.has-key;
+    property <string> model: SettingsState.ai-model != "" ? SettingsState.ai-model : ChatState.model;
+    VerticalLayout {
+        Rectangle {
+            height: 48px;
+            HorizontalLayout {
+                padding-left: 14px;
+                padding-right: 8px;
+                spacing: 10px;
+                VerticalLayout { alignment: center; Icon { source: Icons.wand; size: 16px; colorize: Theme.accent; } }
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    alignment: center;
+                    spacing: 1px;
+                    Text { text: "AI editor"; color: Theme.fg; font-size: Theme.text-xs; font-weight: 600; }
+                    Rectangle {
+                        height: model-label.preferred-height;
+                        model-label := Text {
+                            width: parent.width;
+                            text: root.ready ? root.model : "Not connected";
+                            color: model-touch.has-hover ? Theme.muted : Theme.faint;
+                            font-size: 11px;
+                            overflow: elide;
+                        }
+                        model-touch := TouchArea { mouse-cursor: MouseCursor.pointer; clicked => { ChatState.open-settings(); } }
+                    }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    Button {
+                        icon: Icons.refresh;
+                        kind: ButtonKind.ghost;
+                        size: ButtonSize.sm;
+                        tooltip: "New chat";
+                        enabled: !ChatState.busy && ChatState.entries.length > 0;
+                        clicked => { ChatState.reset(); }
+                    }
+                }
+            }
+            Rectangle { y: parent.height - 1px; height: 1px; background: Theme.line; }
+        }
+
+        if !root.ready: VerticalLayout {
+            vertical-stretch: 1;
+            alignment: center;
+            padding: 24px;
+            spacing: 10px;
+            HorizontalLayout { alignment: center; Icon { source: Icons.sparkles; size: 28px; colorize: Theme.accent; } }
+            Text { text: "Edit your video by just saying what you want"; color: Theme.fg; font-size: Theme.text-sm; font-weight: 600; horizontal-alignment: center; wrap: word-wrap; }
+            Text {
+                text: "Add your OpenRouter API key in Settings → AI and pick a model. The AI then cuts, adds captions, text, effects, music sync and more, right here in the editor, and every change can be undone.";
+                color: Theme.muted;
+                font-size: Theme.text-2xs;
+                horizontal-alignment: center;
+                wrap: word-wrap;
+            }
+            HorizontalLayout { alignment: center; padding-top: 4px; Button { text: "Open settings"; icon: Icons.settings; kind: ButtonKind.primary; clicked => { ChatState.open-settings(); } } }
+            Text {
+                text: "Use Claude, Cursor or another AI app instead? They connect over MCP; Settings → AI shows how.";
+                color: Theme.faint;
+                font-size: Theme.text-2xs;
+                horizontal-alignment: center;
+                wrap: word-wrap;
+            }
+        }
+
+        if root.ready: ChatList { vertical-stretch: 1; }
+
+        if root.ready: HorizontalLayout {
+            padding: 10px;
+            padding-top: 4px;
+            Composer {
+                submit => {
+                    if !ChatState.busy && ChatState.draft != "" {
+                        ChatState.send(ChatState.draft);
+                    }
+                }
+            }
+        }
+    }
+}

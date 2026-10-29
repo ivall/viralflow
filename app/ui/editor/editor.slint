@@ -7,8 +7,9 @@ import { Inspector, InspectorState } from "inspector.slint";
 import { AssetPanel, AssetsState, CaptionsState } from "assets.slint";
 import { ExportDialog, ExportState, ExportPhase } from "export.slint";
 import { ShortcutsDialog } from "shortcuts.slint";
+import { ChatState, ChatEntry } from "assistant.slint";
 
-export { EditorState, TimelineState, InspectorState, AssetsState, DragState, ExportState, ExportPhase, CaptionsState }
+export { EditorState, TimelineState, InspectorState, AssetsState, DragState, ExportState, ExportPhase, CaptionsState, ChatState, ChatEntry }
 
 export component EditorView inherits Rectangle {
     background: Theme.app;

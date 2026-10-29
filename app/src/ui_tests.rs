@@ -111,9 +111,15 @@ fn full_screen_shows_only_the_preview() {
 
 fn asset_tabs_switch_the_panel() {
     let window = editor_window();
-    for (label, panel) in
-        [("Text", "text"), ("Stickers", "stickers"), ("Effects", "effects"), ("Transitions", "transitions"), ("Captions", "captions"), ("Media", "media")]
-    {
+    for (label, panel) in [
+        ("Text", "text"),
+        ("Stickers", "stickers"),
+        ("Effects", "effects"),
+        ("Transitions", "transitions"),
+        ("Captions", "captions"),
+        ("AI", "ai"),
+        ("Media", "media"),
+    ] {
         let tab = ElementHandle::find_by_element_id(&window, "PanelTab::tab-touch")
             .find(|candidate| {
                 let (p, size) = (candidate.absolute_position(), candidate.size());
@@ -127,6 +133,26 @@ fn asset_tabs_switch_the_panel() {
         tab.mock_single_click(PointerEventButton::Left);
         assert_eq!(window.global::<EditorState>().get_panel(), panel);
     }
+}
+
+fn ai_panel_sends_requests() {
+    let window = editor_window();
+    let log: Log = Rc::default();
+    let state = window.global::<crate::ChatState>();
+    let (a, b) = (log.clone(), log.clone());
+    state.on_send(move |text| a.borrow_mut().push(format!("send:{text}")));
+    state.on_open_settings(move || b.borrow_mut().push("settings".into()));
+    window.global::<EditorState>().set_panel("ai".into());
+    // Without a key the panel says how to connect.
+    labelled(&window, "Open settings").mock_single_click(PointerEventButton::Left);
+    state.set_ready(true);
+    state.set_suggestions(slint::ModelRc::new(slint::VecModel::from(vec![slint::SharedString::from("Cut the silences")])));
+    // A suggestion is a request in one click; the box sends what was typed.
+    labelled(&window, "Cut the silences").mock_single_click(PointerEventButton::Left);
+    state.set_draft("Add captions".into());
+    labelled(&window, "Send (Enter)").mock_single_click(PointerEventButton::Left);
+    assert_eq!(*log.borrow(), ["settings", "send:Cut the silences", "send:Add captions"]);
+    window.global::<EditorState>().set_panel("media".into());
 }
 
 fn the_title_bar_is_off_while_a_dialog_is_open() {
@@ -366,7 +392,8 @@ fn open_editor(paths: crate::paths::AppPaths, project: &str) -> (AppWindow, Rc<c
     let toasts = crate::toast::Toasts::new(&window);
     let settings = crate::settings::SettingsStore::load(&paths);
     let keys = crate::secrets::KeyStore::in_memory();
-    let context = Rc::new(crate::app::Context { window: window.as_weak(), gpu, paths, settings, keys, toasts });
+    let mcp = crate::agent::mcp::Service::new(&paths.data);
+    let context = Rc::new(crate::app::Context { window: window.as_weak(), gpu, paths, settings, keys, toasts, mcp });
     let editor = crate::editor::EditorController::new(context, std::sync::Arc::new(vf_render::TextEngine::new()));
     window.show().unwrap();
     editor.open(project);
@@ -548,7 +575,8 @@ fn open_app(paths: crate::paths::AppPaths) -> (AppWindow, Rc<crate::home::Home>,
     let toasts = crate::toast::Toasts::new(&window);
     let settings = crate::settings::SettingsStore::load(&paths);
     let keys = crate::secrets::KeyStore::in_memory();
-    let context = Rc::new(crate::app::Context { window: window.as_weak(), gpu, paths, settings, keys, toasts });
+    let mcp = crate::agent::mcp::Service::new(&paths.data);
+    let context = Rc::new(crate::app::Context { window: window.as_weak(), gpu, paths, settings, keys, toasts, mcp });
     let home = crate::home::Home::new(context.clone());
     let settings_page = crate::settings_page::SettingsPage::new(context.clone());
     let editor = crate::editor::EditorController::new(context, std::sync::Arc::new(vf_render::TextEngine::new()));
@@ -1328,6 +1356,7 @@ fn ui_scenarios() {
     timeline_context_menu_reports_the_entry();
     full_screen_shows_only_the_preview();
     asset_tabs_switch_the_panel();
+    ai_panel_sends_requests();
     dialogs_close_from_their_buttons();
     the_title_bar_is_off_while_a_dialog_is_open();
     media_tiles_drag_and_add();

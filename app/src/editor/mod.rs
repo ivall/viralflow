@@ -1,5 +1,6 @@
 //! The editor page: one open project, its preview, playback and autosave.
 
+mod agent;
 mod assets;
 mod canvas;
 mod captions;
@@ -98,6 +99,12 @@ pub struct EditorController {
     cards_timer: slint::Timer,
     /// Called after the editor closed (the project list should refresh).
     pub on_closed: RefCell<Option<Box<dyn Fn()>>>,
+    /// Called with the id of each project the editor opens.
+    pub on_opened: crate::app::Listener<String>,
+    /// Called when an asset panel is shown ("media", "ai"…).
+    pub on_panel: crate::app::Listener<String>,
+    /// The AI's job for the running export, told its progress.
+    export_watch: RefCell<Option<Arc<crate::agent::jobs::Job>>>,
 }
 
 impl EditorController {
@@ -116,6 +123,9 @@ impl EditorController {
             cards: RefCell::default(),
             cards_timer: slint::Timer::default(),
             on_closed: RefCell::default(),
+            on_opened: RefCell::default(),
+            on_panel: RefCell::default(),
+            export_watch: RefCell::default(),
         });
         if let Some(window) = context.window() {
             controller.bind(&window.global::<EditorState>());
@@ -166,6 +176,9 @@ impl EditorController {
         on!(on_panel_changed, |this, panel| {
             if panel == "captions" {
                 this.sync_captions();
+            }
+            if let Some(callback) = this.on_panel.borrow().as_ref() {
+                callback(panel.to_string());
             }
         });
         let weak = Rc::downgrade(self);
@@ -313,6 +326,27 @@ impl EditorController {
         if panel == "captions" {
             self.sync_captions();
         }
+        if let Some(callback) = self.on_panel.borrow().as_ref() {
+            callback(panel.to_string());
+        }
+    }
+
+    /// Settings, coming back to the editor afterwards.
+    pub fn open_settings(&self) {
+        self.flush();
+        if let Some(window) = self.context.window() {
+            window.global::<crate::AppState>().set_back_page(Page::Editor);
+        }
+        self.context.go(Page::Settings);
+    }
+
+    /// The AI panel with the cursor in its message box (Ctrl+K).
+    fn ask_ai(&self) {
+        self.open_panel("ai");
+        if let Some(window) = self.context.window() {
+            let state = window.global::<crate::ChatState>();
+            state.set_focus_request(state.get_focus_request() + 1);
+        }
     }
 
     fn timeline_action(&self, action: &str) {
@@ -410,6 +444,9 @@ impl EditorController {
                 self.start_timer();
                 self.sync_ui();
                 self.sync_captions();
+                if let Some(callback) = self.on_opened.borrow().as_ref() {
+                    callback(id.to_string());
+                }
             }
             Err(error) => {
                 state.set_loading(false);
@@ -846,10 +883,7 @@ impl EditorController {
             "import" => self.import_media(false),
             "save-file" => self.save_project_file(),
             "shortcuts" => self.show_shortcuts(),
-            "settings" => {
-                self.flush();
-                self.context.go(Page::Settings);
-            }
+            "settings" => self.open_settings(),
             _ => {}
         }
     }
@@ -915,6 +949,7 @@ impl EditorController {
                 }
                 "i" => self.import_media(false),
                 "e" => self.open_export(),
+                "k" => self.ask_ai(),
                 _ => return false,
             }
             return true;

@@ -5,6 +5,7 @@
 import { Theme, Icons } from "../theme.slint";
 import { Button, ButtonKind, ButtonSize, Surface, Icon, TextField, Menu, MenuEntry, Choice, ScrollView, Field, Select, Segmented } from "../widgets.slint";
 import { EditorState } from "state.slint";
+import { AssistantPanel } from "assistant.slint";
 
 export struct AssetTile {
     id: string,
@@ -764,6 +765,7 @@ export component AssetPanel inherits Surface {
                 PanelTab { horizontal-stretch: 1; id: "effects"; label: "Effects"; icon: Icons.sparkles; }
                 PanelTab { horizontal-stretch: 1; id: "transitions"; label: "Transitions"; icon: Icons.blend; }
                 PanelTab { horizontal-stretch: 1; id: "captions"; label: "Captions"; icon: Icons.captions; }
+                PanelTab { horizontal-stretch: 1; id: "ai"; label: "AI"; icon: Icons.wand; }
             }
             Rectangle { y: parent.height - 1px; height: 1px; background: Theme.line; }
         }
@@ -773,5 +775,6 @@ export component AssetPanel inherits Surface {
         if EditorState.panel == "effects": EffectsPanel { vertical-stretch: 1; }
         if EditorState.panel == "transitions": TransitionsPanel { vertical-stretch: 1; }
         if EditorState.panel == "captions": CaptionsPanel { vertical-stretch: 1; }
+        if EditorState.panel == "ai": AssistantPanel { vertical-stretch: 1; }
     }
 }

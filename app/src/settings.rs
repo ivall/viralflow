@@ -22,6 +22,8 @@ pub struct Settings {
     pub safe_area: bool,
     pub export_folder: String,
     pub hardware_encoding: bool,
+    /// AI apps (Claude, Cursor…) may edit through the local MCP server.
+    pub mcp_enabled: bool,
 }
 
 impl Default for Settings {
@@ -39,6 +41,7 @@ impl Default for Settings {
             safe_area: false,
             export_folder: String::new(),
             hardware_encoding: false,
+            mcp_enabled: true,
         }
     }
 }

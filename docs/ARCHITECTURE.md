@@ -87,6 +87,22 @@ app (Slint UI, editor controller, export, settings)
 - `ui_tests.rs` drives the real UI headless (Slint's testing backend): clicks, drags,
   shortcuts, export to a file.
 
+## The AI editor (`app/src/agent`)
+
+- `specs.rs` lists every tool with its JSON Schema; the chat (OpenAI function calling) and MCP use the same list.
+- `edits.rs` holds the editing tools: pure changes through `Editor`, validated with errors a model can act on,
+  reporting each clip as it ends up. `describe.rs` is the compact JSON the model reads (timeline times, defaults left
+  out, caption groups summarised).
+- `editor/agent.rs` adds what needs more than the document: rendering frames (export renderer, own GPU device),
+  frames of files, speech recognition (cached per file), beats, import, playback and export. Each tool call is one
+  undo step (`Editor::begin_batch`).
+- Tools run on the UI thread (`bridge.rs`); callers wait on their own thread. Long work (`Reply::Later`, `jobs.rs`)
+  never blocks the UI: a tool waits a while for its job and otherwise returns its id for `job_status`.
+- `chat.rs` is the AI panel: the tool-calling loop against OpenRouter on a background thread, one conversation per
+  project (`assistant.json` next to the project), "undo this request" from the document saved before it.
+- `mcp.rs` serves MCP over HTTP on 127.0.0.1 (token, Host/Origin checks) while the app runs; `viralflow --mcp` is the
+  stdio server AI apps start: it answers the handshake itself and forwards tool calls, starting the app if needed.
+
 ## Packaging
 
 - Windows: `scripts/package.ps1` (portable .zip, Inno Setup installer).

@@ -129,7 +129,8 @@ fn remove_file(path: &Path) -> Result<()> {
     }
 }
 
-fn write_private(path: &Path, key: &str) -> Result<()> {
+/// Writes a file only the user can read (where the system allows it).
+pub(crate) fn write_private(path: &Path, key: &str) -> Result<()> {
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create(true).truncate(true);
     #[cfg(unix)]
