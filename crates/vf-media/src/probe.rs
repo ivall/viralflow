@@ -37,13 +37,29 @@ pub(crate) fn stream_rotation(stream: &ffmpeg::format::stream::Stream) -> i32 {
         if side.is_null() || (*side).data.is_null() || (*side).size < 36 {
             return 0;
         }
-        let angle = ffmpeg::ffi::av_display_rotation_get((*side).data as *const i32);
-        if !angle.is_finite() {
-            return 0;
-        }
-        // The matrix stores the counter-clockwise angle; snap to quarter turns.
-        ((-angle / 90.0).round() as i32 * 90).rem_euclid(360)
+        matrix_rotation((*side).data as *const i32)
     }
+}
+
+/// Clockwise display rotation of a decoded picture: photos keep their
+/// orientation (EXIF) there rather than on the stream.
+pub(crate) fn frame_rotation(frame: &ffmpeg::frame::Video) -> i32 {
+    match frame.side_data(ffmpeg::frame::side_data::Type::DisplayMatrix) {
+        // SAFETY: a display matrix is nine 32-bit values.
+        Some(side) if side.data().len() >= 36 => unsafe { matrix_rotation(side.data().as_ptr() as *const i32) },
+        _ => 0,
+    }
+}
+
+/// # Safety
+/// `matrix` points to a 3×3 display matrix.
+unsafe fn matrix_rotation(matrix: *const i32) -> i32 {
+    let angle = ffmpeg::ffi::av_display_rotation_get(matrix);
+    if !angle.is_finite() {
+        return 0;
+    }
+    // The matrix stores the counter-clockwise angle; snap to quarter turns.
+    ((-angle / 90.0).round() as i32 * 90).rem_euclid(360)
 }
 
 fn rate(value: ffmpeg::Rational) -> Option<f64> {
@@ -94,6 +110,13 @@ pub fn probe(path: &Path) -> Result<Probe> {
         && (format_name.contains("image2")
             || format_name.ends_with("_pipe")
             || (image_codec && frames.unwrap_or(1) <= 1 && info.duration.unwrap_or(0.0) < 0.5));
+    if still && info.rotation == 0 {
+        // A photo's orientation only shows on its decoded picture.
+        info.rotation = crate::video::picture_rotation(path).unwrap_or(0);
+        if info.rotation % 180 == 90 {
+            (info.width, info.height) = (info.height, info.width);
+        }
+    }
     info.kind = if still {
         info.duration = None;
         info.has_audio = false;

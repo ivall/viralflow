@@ -180,8 +180,7 @@ impl VideoDecoder {
             }
             Err(error) => return Err(error),
         };
-        let (sw, sh) = if rotation % 180 == 90 { (decoder.height(), decoder.width()) } else { (decoder.width(), decoder.height()) };
-        let (width, height) = fit_size(sw, sh, max_w, max_h);
+        let (width, height) = output_size(&decoder, rotation, max_w, max_h);
         Ok(VideoDecoder {
             input,
             stream: index,
@@ -365,6 +364,20 @@ impl VideoDecoder {
         Ok(Some(image))
     }
 
+    /// The first picture, decoded from where the file opened: after a seek,
+    /// FFmpeg's image2 demuxer has nothing left to read of a JPEG bigger than
+    /// a few kilobytes. A photo's orientation (EXIF) is on this picture rather
+    /// than the stream, so the output turns to it, within `max_w`×`max_h`.
+    fn first_picture(&mut self, max_w: u32, max_h: u32) -> Result<Option<Decoded>> {
+        let Some(first) = self.decode_next()? else { return Ok(None) };
+        let rotation = crate::probe::frame_rotation(&first.frame);
+        if self.rotation == 0 && rotation != 0 {
+            self.rotation = rotation;
+            (self.width, self.height) = output_size(&self.decoder, rotation, max_w, max_h);
+        }
+        Ok(Some(first))
+    }
+
     /// Timestamp of the frame last returned by `frame_at`.
     pub fn current_time(&self) -> Option<f64> {
         self.current.as_ref().map(|c| c.time)
@@ -423,10 +436,24 @@ impl VideoDecoder {
     }
 }
 
+/// Output size of a decoder's frames turned by `rotation`, within `max_w`×`max_h`.
+fn output_size(decoder: &ffmpeg::decoder::Video, rotation: i32, max_w: u32, max_h: u32) -> (u32, u32) {
+    let (sw, sh) = if rotation % 180 == 90 { (decoder.height(), decoder.width()) } else { (decoder.width(), decoder.height()) };
+    fit_size(sw, sh, max_w, max_h)
+}
+
 /// Decodes one picture (an image file, or the first frame of a video).
 pub fn load_image(path: &Path, max_w: u32, max_h: u32) -> Result<RgbaImage> {
     let mut decoder = VideoDecoder::open_keyframes(path, max_w, max_h)?;
-    decoder.frame_at(0.0)?.ok_or_else(|| Error::msg(format!("{} has no picture.", path.display())))
+    let first = decoder.first_picture(max_w, max_h)?.ok_or_else(|| Error::msg(format!("{} has no picture.", path.display())))?;
+    decoder.convert(&first.frame)
+}
+
+/// Clockwise rotation a picture file is shown with.
+pub(crate) fn picture_rotation(path: &Path) -> Result<i32> {
+    let mut decoder = VideoDecoder::open_keyframes(path, 2, 2)?;
+    decoder.first_picture(2, 2)?;
+    Ok(decoder.rotation)
 }
 
 #[cfg(test)]

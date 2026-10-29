@@ -10,6 +10,9 @@ use vf_media::probe::probe;
 use vf_media::video::VideoDecoder;
 
 fn fixtures() -> Option<PathBuf> {
+    // Tests run in parallel: one makes the files while the others wait.
+    static MAKING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _making = MAKING.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let dir = std::env::temp_dir().join("vf-media-fixtures");
     std::fs::create_dir_all(&dir).ok()?;
     let make = |name: &str, args: &[&str]| -> Option<()> {
@@ -40,7 +43,41 @@ fn fixtures() -> Option<PathBuf> {
     )?;
     make("tone.wav", &["-f", "lavfi", "-i", "sine=f=440:d=1:sample_rate=44100"])?;
     make("rotated.mp4", &["-display_rotation", "90", "-i", dir.join("counter.mp4").to_str()?, "-c", "copy"])?;
+    // 320×160: red left half, blue right half. Grainy, so the file is as big
+    // as a photo's: FFmpeg loses small and large JPEGs differently.
+    make("photo.jpg", &["-f", "lavfi", "-i", "color=c=red:s=160x160,pad=320:160:0:0:blue,noise=alls=20:allf=t", "-frames:v", "1", "-q:v", "2"])?;
+    let upright = dir.join("photo-exif6.jpg");
+    if !upright.is_file() {
+        std::fs::write(&upright, with_orientation(&std::fs::read(dir.join("photo.jpg")).ok()?, 6)).ok()?;
+    }
     Some(dir)
+}
+
+/// The JPEG with an EXIF orientation tag, as phone cameras write it
+/// (6: the picture is shown turned 90° clockwise).
+fn with_orientation(jpeg: &[u8], orientation: u8) -> Vec<u8> {
+    let mut exif = b"Exif\0\0MM\0\x2a\0\0\0\x08\0\x01\x01\x12\0\x03\0\0\0\x01\0".to_vec();
+    exif.extend_from_slice(&[orientation, 0, 0, 0, 0, 0, 0]);
+    let length = (exif.len() + 2) as u16;
+    let mut out = jpeg[..2].to_vec();
+    out.extend_from_slice(&[0xff, 0xe1]);
+    out.extend_from_slice(&length.to_be_bytes());
+    out.extend_from_slice(&exif);
+    out.extend_from_slice(&jpeg[2..]);
+    out
+}
+
+fn pixel(image: &vf_media::RgbaImage, x: u32, y: u32) -> [u8; 3] {
+    let at = ((y * image.width + x) * 4) as usize;
+    [image.data[at], image.data[at + 1], image.data[at + 2]]
+}
+
+fn is_red(rgb: [u8; 3]) -> bool {
+    rgb[0] > 160 && rgb[2] < 100
+}
+
+fn is_blue(rgb: [u8; 3]) -> bool {
+    rgb[2] > 160 && rgb[0] < 100
 }
 
 fn red_at(decoder: &mut VideoDecoder, time: f64) -> u8 {
@@ -86,6 +123,33 @@ fn rotation_is_applied() {
     let mut decoder = VideoDecoder::open(path, 1000, 1000).unwrap();
     let frame = decoder.frame_at(0.0).unwrap().unwrap();
     assert_eq!((frame.width, frame.height), (48, 64));
+}
+
+#[test]
+fn jpeg_photos_load() {
+    let Some(dir) = fixtures() else { return };
+    let path: &Path = &dir.join("photo.jpg");
+    let info = probe(path).unwrap();
+    assert_eq!(info.kind, Some(MediaKind::Image));
+    assert_eq!((info.width, info.height), (Some(320), Some(160)));
+    let image = vf_media::video::load_image(path, 1000, 1000).unwrap();
+    assert_eq!((image.width, image.height), (320, 160));
+    assert!(is_red(pixel(&image, 40, 80)) && is_blue(pixel(&image, 280, 80)));
+}
+
+#[test]
+fn photos_follow_their_exif_orientation() {
+    let Some(dir) = fixtures() else { return };
+    let path: &Path = &dir.join("photo-exif6.jpg");
+    let info = probe(path).unwrap();
+    assert_eq!((info.width, info.height), (Some(160), Some(320)), "the size it is shown at");
+    // Turned clockwise, the left (red) half is on top.
+    let image = vf_media::video::load_image(path, 1000, 1000).unwrap();
+    assert_eq!((image.width, image.height), (160, 320));
+    assert!(is_red(pixel(&image, 80, 40)) && is_blue(pixel(&image, 80, 280)));
+    // Fitted in a box the shape of the upright picture, it fills it.
+    let fitted = vf_media::video::load_image(path, 80, 160).unwrap();
+    assert_eq!((fitted.width, fitted.height), (80, 160));
 }
 
 #[test]

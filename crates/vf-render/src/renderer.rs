@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
-use std::sync::mpsc::{channel, Receiver};
+use std::sync::mpsc::{channel, Receiver, TryRecvError};
 use std::sync::{Arc, Mutex};
 
 use vf_core::engine::color::hex_to_rgb;
@@ -74,6 +74,8 @@ impl VideoSlot {
 }
 
 struct ImageSlot {
+    /// Size last decoded for: a clip shown much larger decodes again.
+    size: (u32, u32),
     pending: Option<Receiver<Option<RgbaImage>>>,
 }
 
@@ -312,40 +314,49 @@ impl FrameRenderer {
     }
 
     fn image_picture(&mut self, project: &Project, item: &TimelineItem, layer: &Layer, k: f64) -> bool {
+        let Some(asset) = project.asset(item.asset_id.as_deref()) else { return true };
         let key = image_key(item);
+        let size = self.decode_size(project, item, layer, k);
         if let Some(picture) = self.pictures.get_mut(&key) {
             picture.used = self.tick;
-            return true;
         }
-        let Some(asset) = project.asset(item.asset_id.as_deref()) else { return true };
-        let size = self.decode_size(project, item, layer, k);
-        let path = PathBuf::from(&asset.path);
-        let loaded = match self.mode {
-            Mode::Export => Some(vf_media::video::load_image(&path, size.0, size.1).ok()),
-            Mode::Preview => {
-                let slot = self.images.entry(key.clone()).or_insert_with(|| {
+        // Not decoded yet, or a much sharper picture needed: decode (again).
+        let sharp = self.images.get(&key).is_some_and(|slot| size.0 <= slot.size.0 * 3 / 2 && size.1 <= slot.size.1 * 3 / 2);
+        if !sharp {
+            let path = PathBuf::from(&asset.path);
+            let pending = match self.mode {
+                Mode::Export => {
+                    if let Ok(image) = vf_media::video::load_image(&path, size.0, size.1) {
+                        self.pictures.insert(key.clone(), Picture::new(&self.gpu, &image, self.tick, "image"));
+                    }
+                    None
+                }
+                Mode::Preview => {
                     let (tx, rx) = channel();
                     std::thread::spawn(move || {
                         let _ = tx.send(vf_media::video::load_image(&path, size.0, size.1).ok());
                     });
-                    ImageSlot { pending: Some(rx) }
-                });
-                match slot.pending.as_ref().map(|rx| rx.try_recv()) {
-                    Some(Ok(result)) => {
-                        slot.pending = None;
-                        Some(result)
-                    }
-                    _ => None,
+                    Some(rx)
                 }
-            }
-        };
-        match loaded {
-            Some(Some(image)) => {
-                self.pictures.insert(key, Picture::new(&self.gpu, &image, self.tick, "image"));
+            };
+            self.images.insert(key.clone(), ImageSlot { size, pending });
+        }
+        let slot = self.images.get_mut(&key).expect("image slot");
+        let Some(pending) = &slot.pending else { return true };
+        match pending.try_recv() {
+            Ok(loaded) => {
+                slot.pending = None;
+                if let Some(image) = loaded {
+                    self.pictures.insert(key, Picture::new(&self.gpu, &image, self.tick, "image"));
+                }
                 true
             }
-            Some(None) => true,
-            None => false,
+            // Still decoding: the smaller picture, if any, stands in.
+            Err(TryRecvError::Empty) => false,
+            Err(TryRecvError::Disconnected) => {
+                slot.pending = None;
+                true
+            }
         }
     }
 
@@ -405,6 +416,73 @@ pub fn text_detail(item: &TimelineItem) -> f64 {
         peak *= zoom;
     }
     [1.0, 1.5, 2.0, 3.0, 4.0, 6.0].into_iter().find(|step| peak <= step * 1.02).unwrap_or(6.0)
+}
+
+#[cfg(test)]
+mod image_tests {
+    use super::*;
+    use vf_core::model::{Fit, MediaAsset, MediaKind, Track, TrackKind, Transform};
+
+    fn photo() -> Option<PathBuf> {
+        let path = std::env::temp_dir().join("vf-render-fixtures").join("photo-1024.png");
+        if !path.is_file() {
+            std::fs::create_dir_all(path.parent()?).ok()?;
+            let made = std::process::Command::new("ffmpeg")
+                .args(["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=1024x1024", "-frames:v", "1"])
+                .arg(&path)
+                .status()
+                .is_ok_and(|s| s.success());
+            if !made {
+                return None;
+            }
+        }
+        Some(path)
+    }
+
+    /// A photo first shown small is decoded again, sharper, once it is shown large.
+    #[test]
+    fn images_sharpen_when_shown_larger() {
+        let Some(path) = photo() else { return };
+        let Ok(gpu) = Gpu::new() else { return };
+        let mut project = vf_core::presets::create_project("Test", 1024, 1024, 30);
+        project.assets.push(MediaAsset {
+            id: "a".into(),
+            kind: MediaKind::Image,
+            name: "photo".into(),
+            path: path.display().to_string(),
+            width: Some(1024.0),
+            height: Some(1024.0),
+            size: 1,
+            ..Default::default()
+        });
+        let image = TimelineItem {
+            id: "i".into(),
+            kind: ItemKind::Image,
+            start: 0.0,
+            duration: 4.0,
+            asset_id: Some("a".into()),
+            fit: Some(Fit::Fill),
+            transform: Some(Transform::default()),
+            ..Default::default()
+        };
+        project.tracks = vec![Track { id: "t".into(), kind: TrackKind::Video, items: vec![image], ..Default::default() }];
+        for mode in [Mode::Preview, Mode::Export] {
+            let mut renderer = FrameRenderer::new(&gpu, Arc::new(TextEngine::new()), mode);
+            let mut decoded_width = |size: u32| {
+                let target = crate::compositor::render_target(&gpu, size, size);
+                // The preview decodes in the background.
+                for _ in 0..400 {
+                    if renderer.render(&project, 1.0, &target, size as f64 / 1024.0).complete {
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                renderer.pictures["image:a"].width
+            };
+            assert!(decoded_width(128) < 256, "{mode:?}: decoded for the small view");
+            assert_eq!(decoded_width(1024), 1024, "{mode:?}: decoded again for the large view");
+        }
+    }
 }
 
 #[cfg(test)]
